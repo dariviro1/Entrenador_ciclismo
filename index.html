@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entrenamiento de ciclismo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --bg: #10151F;
+    --surface: #1A2130;
+    --border: #2A3244;
+    --text: #EDEFF3;
+    --text-muted: #7C8698;
+    --power: #F2A93B;
+    --hr: #E2574C;
+    --cadence: #C7CDD9;
+    --ftp: #4FB8C4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    padding: 32px 20px 60px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 24px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.02em; }
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+  }
+  #workout-name { color: var(--text-muted); font-size: 14px; }
+  section { margin-bottom: 28px; }
+
+  .connect-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--text-muted); }
+  button.primary { background: var(--power); border-color: var(--power); color: #2B1B04; }
+  button.primary:hover { opacity: 0.9; }
+
+  .gauges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .gauge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 16px;
+    text-align: center;
+  }
+  .gauge .value { font-family: 'JetBrains Mono', monospace; font-size: 40px; font-weight: 700; line-height: 1; }
+  .gauge .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-top: 8px; }
+  #power { color: var(--power); }
+  #hr { color: var(--hr); }
+  #cadence { color: var(--cadence); }
+
+  .target-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  .target-row .label { font-size: 13px; color: var(--text-muted); }
+  .target-row .value { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; color: var(--power); }
+
+  #timeline {
+    display: flex;
+    align-items: flex-end;
+    height: 64px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    gap: 2px;
+    margin-bottom: 24px;
+  }
+  .segment { background: var(--power); height: var(--h, 40%); border-radius: 2px; min-width: 2px; opacity: 0.85; }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    height: 180px;
+  }
+
+  .ftp-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .ftp-current { display: flex; align-items: baseline; gap: 8px; }
+  .ftp-current .value { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; color: var(--ftp); }
+  .ftp-current .label { font-size: 12px; color: var(--text-muted); }
+  .ftp-actions { display: flex; gap: 8px; align-items: center; }
+  input[type="number"], input[type="text"], input[type="date"], select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+  }
+  #ftp-input { width: 90px; }
+
+  .editor-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .editor-top-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  #editor-name { flex: 1; min-width: 160px; }
+  .editor-row {
+    display: grid;
+    grid-template-columns: 90px 100px 1fr 32px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .editor-row .e-remove {
+    padding: 0;
+    height: 32px;
+    color: var(--hr);
+    border-color: var(--border);
+  }
+  .editor-actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  #editor-status, #status { font-size: 13px; color: var(--text-muted); min-height: 18px; margin-top: 8px; }
+
+  .controls { display: flex; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Entrenamiento de hoy</h1>
+    <span id="workout-name">Sin cargar</span>
+  </header>
+
+  <section>
+    <h2>Sensores</h2>
+    <div class="connect-row">
+      <button id="connect-power">Conectar potenciómetro</button>
+      <button id="connect-trainer">Conectar rodillo</button>
+      <button id="connect-hr">Conectar banda FC</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="gauges">
+      <div class="gauge"><div class="value" id="power">--</div><div class="label">Potencia (W)</div></div>
+      <div class="gauge"><div class="value" id="cadence">--</div><div class="label">Cadencia (rpm)</div></div>
+      <div class="gauge"><div class="value" id="hr">--</div><div class="label">FC (bpm)</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="target-row">
+      <span class="label">Objetivo del intervalo actual</span>
+      <span class="value"><span id="target">--</span> W</span>
+    </div>
+    <div class="target-row">
+      <span class="label">Hidratación sugerida</span>
+      <span class="value" id="hydration" style="color: var(--ftp); font-size: 14px;">--</span>
+    </div>
+    <div id="timeline"></div>
+  </section>
+
+  <section>
+    <h2>Sesión en vivo</h2>
+    <div class="chart-card"><canvas id="live-chart"></canvas></div>
+  </section>
+
+  <section>
+    <h2>FTP</h2>
+    <div class="ftp-card">
+      <div class="ftp-current">
+        <span class="value" id="ftp-value">--</span>
+        <span class="label">W vigentes</span>
+      </div>
+      <div class="ftp-actions">
+        <input type="number" id="ftp-input" placeholder="nuevo FTP">
+        <button id="save-ftp">Guardar</button>
+        <button id="check-ftp">Revisar progresión</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Editor de entrenamientos</h2>
+    <div class="editor-card">
+      <div class="editor-top-row">
+        <input type="date" id="editor-date">
+        <input type="text" id="editor-name" placeholder="Nombre del entrenamiento">
+      </div>
+      <div id="editor-rows"></div>
+      <div class="editor-actions">
+        <button id="editor-add-row">+ Intervalo</button>
+        <button id="editor-load">Cargar fecha</button>
+        <button id="editor-save" class="primary">Guardar en calendario</button>
+      </div>
+      <div id="editor-status"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Sesión</h2>
+    <div class="controls">
+      <button id="load-workout">Cargar entrenamiento del día</button>
+      <button id="start" class="primary">Iniciar</button>
+      <button id="stop">Detener</button>
+    </div>
+    <div id="status"></div>
+  </section>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
