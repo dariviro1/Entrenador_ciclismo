@@ -1,149 +1,121 @@
-# Generador de planes de entrenamiento (Google Sheets + Claude)
+# App de entrenamiento de ciclismo
 
-Agrega un botón directamente en tu Google Sheet — "Create My Custom Plan" — que arma
-un wizard, junta tus datos (perfil, historial, FTP), le pide a Claude que diseñe los
-entrenamientos, y los escribe en la pestaña Calendario. Es independiente de la app web:
-vive dentro del propio Sheet como un Apps Script.
+Prototipo funcional que conecta potenciómetro, rodillo inteligente (FTMS) y
+banda de FC vía Web Bluetooth, lee/guarda el calendario en Google Sheets,
+sigue la progresión de FTP y grafica la sesión en vivo.
 
-## Instalar
+## Requisitos
 
-1. Abre tu Google Sheet (el que ya tiene las pestañas Ciclista/Calendario/Historial/FTP).
-2. Menú **Extensiones → Apps Script**.
-3. Borra el contenido de `Code.gs` que viene por defecto y pega el `Code.gs` de esta carpeta.
-4. Click en **+** junto a "Archivos" → **HTML** → nómbralo exactamente `PlanWizard`
-   (sin extensión, Apps Script la agrega solo) → pega el contenido de `PlanWizard.html`.
-5. Guarda (ícono de disco o Ctrl/Cmd+S).
-6. Vuelve a tu Google Sheet y recarga la página. Debería aparecer un nuevo menú
-   **"🚴 Plan de entrenamiento"** junto a Archivo/Editar/etc. (puede tardar unos segundos
-   en aparecer la primera vez).
+- Chrome o Edge de escritorio (Web Bluetooth no funciona en Safari ni Firefox).
+- Rodillo con soporte FTMS o Tacx FE-C sobre BLE (la mayoría de modelos 2018+).
+- Potenciómetro y banda de FC con Bluetooth (perfiles Cycling Power / Heart Rate estándar).
 
-## Configurar tu clave de API
+## 1. Correr el proyecto localmente
 
-1. Crea una clave en [console.anthropic.com](https://console.anthropic.com/settings/keys)
-   (necesitas una cuenta con crédito/facturación activa — es un servicio de pago, aparte
-   de cualquier plan de Claude.ai que ya tengas).
-2. En el Sheet: **🚴 Plan de entrenamiento → Configurar clave de API de Claude**, pégala.
-3. Se guarda en las Propiedades del Script (`PropertiesService`), no en el código — no
-   queda visible para nadie que solo vea el Sheet o el código del Apps Script.
-4. La primera vez que el script llame a `UrlFetchApp`, Google te pedirá autorizar el
-   proyecto (acceso a este Sheet y a servicios externos). Es normal, acéptalo.
+Web Bluetooth exige un "contexto seguro": HTTPS, o `localhost`. Para desarrollo,
+`localhost` es suficiente. Desde la carpeta del proyecto:
 
-## Usar el asistente
+```bash
+python3 -m http.server 8000
+# o: npx serve .
+```
 
-**🚴 Plan de entrenamiento → Create My Custom Plan** y sigue los 5 pasos:
+Abre `http://localhost:8000` en Chrome o Edge.
 
-1. **Fecha de inicio**, y qué quieres que sea ese día — siempre queda incluido en el
-   plan, con tres opciones:
-   - **Test de FTP**: siempre una rampa escalonada de 20 minutos (ver protocolo abajo).
-   - **Usar mi FTP vigente, sin entrenar ese día**: el día queda como descanso/arranque
-     (una fila ligera en Calendario), y tu primer entrenamiento real es el siguiente
-     día que elijas en el paso 4.
-   - **Que sea mi primer entrenamiento**: usa tu FTP vigente y arranca directo con una
-     sesión normal ese mismo día.
-2. Evento (o cuántas semanas planificar si no tienes uno).
-3. Training Approach.
-4. Qué días entrenas y por cuánto tiempo.
-5. Nombre del plan.
+## 2. Crear credenciales de Google Sheets
 
-Al confirmar, Claude genera los entrenamientos y el script los escribe en Calendario —
-verás un resumen con cuántos se crearon y las fechas de test de FTP programadas.
+1. Ve a [Google Cloud Console](https://console.cloud.google.com/) y crea un proyecto.
+2. En "APIs y servicios" → "Biblioteca", habilita **Google Sheets API**.
+3. En "APIs y servicios" → "Pantalla de consentimiento OAuth", configúrala como
+   "Externa" y agrégate a ti mismo como usuario de prueba.
+4. En "Credenciales" → "Crear credenciales" → "ID de cliente de OAuth",
+   tipo **Aplicación web**. En "Orígenes de JavaScript autorizados" agrega
+   `http://localhost:8000` (o el puerto que uses).
+5. Copia el Client ID generado y pégalo en `js/sheets.js`, en la constante `CLIENT_ID`.
+6. Crea una hoja de cálculo en Google Sheets, cópiale el ID (está en la URL,
+   entre `/d/` y `/edit`) y pégalo en `js/app.js`, en `SPREADSHEET_ID`.
 
-## Cómo arma el plan (para que no sea una caja negra)
+## 3. Estructura de la hoja de cálculo
 
-El script separa lo determinístico de lo que le pide a Claude:
+Crea tres pestañas:
 
-- **Determinístico (código, no el modelo):** qué fechas caen según los días que
-  elegiste, cuántas semanas dura el plan, qué fase de periodización le toca a cada
-  semana (base / build / recovery / peak / taper), tu fecha de inicio (siempre incluida,
-  según lo que elegiste para ese día), y qué fechas se convierten en test de FTP — con
-  un protocolo fijo, no generado por IA, para que sea confiable.
-- **A cargo de Claude:** diseñar el entrenamiento específico de cada fecha (nombre,
-  intervalos en %FTP) respetando la fase de esa semana, el tiempo disponible ese día,
-  y tu historial reciente — usando tu perfil (FTP, peso, FC) y tus últimas sesiones
-  como contexto de tu condición actual.
+**Calendario** (una fila por día con entrenamiento asignado — se llena sola
+desde el editor de la app o desde "Create My Custom Plan", no hace falta escribirla
+a mano):
 
-**El test de FTP siempre es una rampa escalonada con escalones de 1 minuto**
-(tanto si lo eliges en tu fecha de inicio como en los tests periódicos durante el
-plan): calentamiento de 10 min, luego escalones de 1 minuto que empiezan en 45% FTP
-y suben 5 puntos cada uno (46%, 50%, 55%... hasta 140%), y vuelta a la calma. No hace
-falta completar los 20 escalones — sube hasta que ya no puedas sostener el objetivo,
-tal como funciona un ramp test real (Zwift, TrainerRoad). Tu nuevo FTP se estima con
-el 75% de la potencia media del último escalón que termines completo
-(`estimateFromRampTest` en `ftp.js` de la app web).
+| A (fecha)  | B (nombre)  | C (intervalos, JSON) | D (duracion_min) | E (hidratacion) |
+|------------|-------------|------------------------|---------------------|----------------------|
+| 2026-08-20 | Umbral 2x20 | `[{"duration":600,"targetPower":150},{"duration":1200,"targetFTPPercent":100},...]` | 65 | 825 ml agua + 1 sobre de hidratante |
 
-**Cadencia de test de FTP periódico por Training Approach** (asunción de diseño propia,
-ajustable en `APPROACHES` dentro de `Code.gs`):
+`duration` en segundos. Cada intervalo trae `targetPower` (vatios fijos) **o**
+`targetFTPPercent` (porcentaje del FTP vigente); la app resuelve el segundo
+caso a vatios automáticamente al cargar el entrenamiento. Las columnas D y E se
+calculan solas al guardar (desde la app o desde el generador de planes) — no hace
+falta completarlas a mano.
 
-| Approach | Cada cuántas semanas testear FTP | Semana de descarga cada... |
-|---|---|---|
-| Conservative | 8 | 3 semanas |
-| Moderate | 6 | 4 semanas |
-| Balanced (recomendado) | 6 | 4 semanas |
-| Demanding | 4 | 3 semanas |
-| Aggressive | 3 | 3 semanas |
+**Historial** (se llena automáticamente al terminar cada sesión):
 
-Los tests se agregan como una fila más en Calendario ("Test de FTP – rampa
-escalonada, escalones de 1 min"); cuando lo completes en la app, anota la potencia
-media del último escalón que lograste terminar entero y guárdala con el botón
-"Guardar" de la sección FTP — el nuevo FTP es 75% de esa potencia
-(`estimateFromRampTest` en `ftp.js` ya hace esa cuenta). Eso alimenta la pestaña
-FTP, que a su vez alimenta el próximo plan que generes.
+| fecha | entrenamiento | duración (s) | potencia media | potencia normalizada | FC media | cadencia media | TSS |
+|-------|----------------|---------------|------------------|------------------------|-----------|------------------|-----|
 
-## Duración e hidratación por entrenamiento
+**FTP** (crea solo los encabezados; la app agrega filas cuando registras un FTP):
 
-Cada fila de Calendario ahora tiene dos columnas más:
+| A (fecha)  | B (ftp, vatios) | C (motivo)        |
+|------------|------------------|--------------------|
+| 2026-08-01 | 245              | test 20min         |
 
-- **D (duracion_min):** la duración total del entrenamiento, calculada solo sumando
-  los intervalos — no depende de Claude, así que siempre es exacta.
-- **E (hidratacion):** cuántos ml de agua y cuántos sobres de hidratante tomar en esa
-  sesión. Para los días que diseña Claude, se lo pide como parte del mismo plan
-  (`hydrationMl` / `hydrationSachets` en la respuesta JSON), dándole la composición
-  real del sobre como contexto:
+## Qué resuelve este prototipo
 
-  | Por sobre (20.7 g) | Cantidad |
-  |---|---|
-  | Carbohidratos (dextrosa) | 13.5 g |
-  | Sodio elemental (citrato de sodio + cloruro de sodio) | ~1703 mg |
-  | Potasio elemental (cloruro de potasio) | ~787 mg |
+- **Sensores**: conexión BLE a potenciómetro, banda de FC y rodillo, con
+  **reconexión automática**: si un sensor se cae a mitad de sesión (rango,
+  batería), la app reintenta solo, con backoff, y avisa en el estado.
+  Al reconectar el rodillo, reaplica automáticamente la potencia objetivo
+  del intervalo en curso.
+- **Control ERG**: fija la potencia objetivo del rodillo por intervalo vía FTMS.
+- **Calendario en Sheets**: un editor dentro de la propia app (sección
+  "Editor de entrenamientos") para armar o modificar el entrenamiento de
+  cualquier fecha con un formulario — sin tocar JSON a mano.
+- **FTP y progresión**: pestaña `FTP` con historial de valores; puedes
+  registrar uno manualmente (ej. tras un test de 20 min) y pedirle a la app
+  que revise tus últimas sesiones y sugiera si conviene subirlo o bajarlo.
+  Los entrenamientos pueden definirse en `%FTP` en vez de vatios fijos, así
+  que al subir el FTP, las próximas sesiones se recalculan solas.
+- **Sesión larga sin cortes**: el token de Google se renueva solo antes de
+  vencer (los tokens de GIS duran ~1h), para que una sesión de 2+ horas no
+  falle a mitad de camino guardando datos.
+- **Gráfica en vivo**: curva de potencia y FC de los últimos 3 minutos,
+  visible durante toda la sesión.
+- **Hidratación por entrenamiento**: cada fila de Calendario trae cuántos ml de
+  agua y cuántos sobres de hidratante tomar en esa sesión (columna E), visible
+  también en la pantalla de la app antes de empezar. Detalle de cómo se calcula
+  en `apps-script/README.md`.
 
-  (Los mg de sodio/potasio elemental no vienen en la etiqueta — se calculan a partir
-  de la masa molar de cada sal; el detalle está comentado en `Code.gs` junto a la
-  constante `SACHET`.) Claude nunca recomienda más de 2 sobres por sesión.
+## Generar un plan de entrenamiento con Claude
 
-  Para el test de FTP y el día de descanso/inicio (que no pasan por Claude), se usa
-  una fórmula de respaldo determinística con la misma referencia (~700 ml/hora, más
-  o menos según intensidad) — así los números no quedan dispares entre lo que genera
-  la IA y lo que arma el código directamente. Es una regla general, no un cálculo de
-  tasa de sudoración personalizado — ajústala según tu propia experiencia y clima, y
-  si tienes alguna condición que requiera cuidar el sodio o el potasio, consulta con
-  un profesional antes de seguirla al pie de la letra.
+Además de la app web, `apps-script/` tiene un generador de planes que vive directamente
+en el Google Sheet: un botón "Create My Custom Plan" que abre un asistente, junta tus
+datos (perfil, historial, FTP), le pide a Claude que diseñe las semanas, y las escribe
+solo en Calendario — incluyendo los tests de FTP programados según qué tan agresivo
+elijas el plan. Instrucciones de instalación y cómo funciona por dentro en
+`apps-script/README.md`.
 
-## Cómo se adapta según lo que sí/no completaste
+## Limitaciones a tener presentes
 
-Este generador no reajusta un plan ya escrito de forma automática en tiempo real — lo
-que hace es que **cada vez que vuelves a correr el asistente**, junta tu historial y tu
-FTP más reciente (incluida la heurística `suggestFTPAdjustment` que ya usa la app) y se
-lo pasa a Claude como contexto, así que un plan nuevo generado después de unas semanas
-de baja adherencia o potencia normalizada floja empieza más conservador que uno generado
-justo después de un bloque bien cumplido. La forma de usarlo es: generas un bloque (4-8
-semanas típico), lo entrenas, y cuando se acerque el final vuelves a correr el asistente
-para el siguiente bloque — eso es lo que lo hace "adaptativo" en la práctica.
-
-## Límites a tener presentes
-
-- **Planes muy largos se generan en bloques.** Si tu evento está a más de 16 semanas,
-  el asistente genera igual las primeras 16 (fase base/build, sin taper) y te avisa que
-  hay que volver a correrlo más adelante para la fase de pico. Es un límite práctico de
-  tamaño de respuesta de la API, no una limitación real de periodización.
-- **La estructura de días/duración es fija por semana.** Si eliges lunes/miércoles/viernes
-  a 60 min, el plan completo repite esos mismos slots cada semana — lo que cambia semana
-  a semana es la intensidad y el tipo de sesión, no el horario.
-- **El costo de la API lo cubres tú directamente** con tu propia clave — revisa el
-  precio vigente por token en la consola de Anthropic antes de generar planes muy largos
-  o de forma muy seguida.
-- Como con cualquier IA, revisa el plan generado antes de una semana muy dura — si algo
-  se ve desproporcionado para tu nivel, ajústalo a mano en Calendario o desde el editor
-  de la app.
-- Si eliges "usar mi FTP vigente, sin entrenar" para tu fecha de inicio, esa fila en
-  Calendario queda como un día muy suave y opcional (15 min o nada) — no la confundas
-  con un test: no genera ningún dato nuevo de FTP.
+- La renovación del token de Google (`ensureValidToken` en `sheets.js`) suele
+  funcionar sin interacción si ya diste consentimiento en la pestaña, pero
+  algunos navegadores con políticas estrictas de cookies de terceros pueden
+  igual pedir confirmación. Para una app en producción conviene un backend
+  con refresh token.
+- La sugerencia de FTP (`suggestFTPAdjustment` en `ftp.js`) es una heurística
+  simple basada en comparar potencia normalizada contra el FTP vigente, no
+  un test real. Sirve como señal, no como reemplazo de un test de 20 min o
+  un ramp test.
+- El offset de cadencia en `bluetooth.js` asume el caso más común de un
+  potenciómetro de biela simple; si tu sensor reporta campos adicionales
+  (balance de pedaleo, datos de rueda), puede necesitar un ajuste — el
+  comentario en el código explica dónde.
+- La hidratación sugerida (columna E de Calendario) es una regla general de
+  ml/hora según duración e intensidad, no un cálculo de tasa de sudoración
+  personalizado ni una recomendación médica. Si tienes alguna condición que
+  requiera cuidar el sodio o el potasio, consulta con un profesional antes de
+  seguirla al pie de la letra.
