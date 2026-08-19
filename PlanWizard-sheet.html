@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #10151F;
+    --surface: #1A2130;
+    --border: #2A3244;
+    --text: #EDEFF3;
+    --text-muted: #7C8698;
+    --power: #F2A93B;
+    --hr: #E2574C;
+    --ftp: #4FB8C4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    padding: 20px 24px 16px;
+  }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  p.hint { color: var(--text-muted); margin: 0 0 16px; line-height: 1.5; }
+
+  .progress { display: flex; gap: 6px; margin-bottom: 20px; }
+  .dot { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
+  .dot.done { background: var(--power); }
+
+  .step { display: none; min-height: 340px; }
+  .step.active { display: block; }
+
+  label { display: block; font-size: 12px; color: var(--text-muted); margin: 14px 0 6px; }
+  input[type="date"], input[type="number"], input[type="text"] {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  input:focus { outline: none; border-color: var(--power); }
+
+  .toggle-group { display: flex; gap: 10px; margin-top: 6px; }
+  .toggle-option {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .toggle-option.active { border-color: var(--power); background: #2A2214; color: var(--power); }
+  .hidden { display: none !important; }
+
+  .approach-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .approach-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+  }
+  .approach-card.active { border-color: var(--ftp); background: #14262A; }
+  .approach-card .name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .approach-card .badge {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--ftp);
+    color: #04232A;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .approach-card .desc { color: var(--text-muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+
+  .days-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .day-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 90px;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+  .day-row .day-toggle { cursor: pointer; font-weight: 500; }
+  .day-row.active { border-color: var(--power); }
+  .day-row .duration-wrap { display: flex; align-items: center; gap: 6px; opacity: 0.35; pointer-events: none; }
+  .day-row.active .duration-wrap { opacity: 1; pointer-events: auto; }
+  .day-row input[type="number"] { padding: 6px 8px; font-size: 13px; }
+
+  .nav { display: flex; justify-content: space-between; margin-top: 20px; }
+  button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  button.primary { background: var(--power); border-color: var(--power); color: #2B1B04; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  #ftp-context { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  #generate-status { margin-top: 14px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+  #generate-status.error { color: var(--hr); }
+  #generate-status.success { color: var(--power); }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border);
+    border-top-color: var(--power); border-radius: 50%; animation: spin 0.8s linear infinite;
+    margin-right: 6px; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="progress">
+  <div class="dot done" data-dot="1"></div>
+  <div class="dot" data-dot="2"></div>
+  <div class="dot" data-dot="3"></div>
+  <div class="dot" data-dot="4"></div>
+  <div class="dot" data-dot="5"></div>
+</div>
+
+<div id="ftp-context"></div>
+
+<div class="step active" data-step="1">
+  <h2>¿Cuándo quieres empezar tu plan?</h2>
+  <p class="hint">La app controla el rodillo y guarda tu progreso desde el primer día del plan.</p>
+  <label>Fecha de inicio</label>
+  <input type="date" id="start-date">
+
+  <label>¿Qué quieres que sea tu fecha de inicio?</label>
+  <div class="approach-list" id="start-action-list">
+    <div class="approach-card" data-action="test">
+      <div class="name">Test de FTP</div>
+      <div class="desc">Escalones de 1 min que suben hasta que ya no puedas sostenerlos (como un ramp test real). Ideal si no has testeado hace tiempo o vienes de un parón.</div>
+    </div>
+    <div class="approach-card" data-action="rest">
+      <div class="name">Usar mi FTP vigente, sin entrenar ese día</div>
+      <div class="desc">Ese día queda como descanso/arranque; tu primer entrenamiento real es el siguiente día que elijas en el paso 4.</div>
+    </div>
+    <div class="approach-card" data-action="first-workout">
+      <div class="name">Que sea mi primer entrenamiento</div>
+      <div class="desc">Usa tu FTP vigente y arranca directo con una sesión normal ese mismo día.</div>
+    </div>
+  </div>
+  <div id="start-duration-wrap" class="hidden">
+    <label>¿Cuánto tiempo tienes ese día? (min)</label>
+    <input type="number" id="start-duration" min="10" max="360" step="5" value="45">
+  </div>
+</div>
+
+<div class="step" data-step="2">
+  <h2>¿Tienes un evento ciclista en el futuro?</h2>
+  <p class="hint">Si lo tienes, el plan reduce carga las últimas semanas para que llegues descansado.</p>
+  <div class="toggle-group">
+    <div class="toggle-option" data-event="yes">Sí</div>
+    <div class="toggle-option" data-event="no">No</div>
+  </div>
+  <div id="event-date-wrap" class="hidden">
+    <label>Fecha del evento</label>
+    <input type="date" id="event-date">
+  </div>
+  <div id="no-event-weeks-wrap" class="hidden">
+    <label>¿Cuántas semanas quieres planificar?</label>
+    <input type="number" id="weeks-if-no-event" min="2" max="16" value="6">
+  </div>
+</div>
+
+<div class="step" data-step="3">
+  <h2>Elige tu Training Approach</h2>
+  <p class="hint">Qué tan agresiva es la progresión de carga y qué tan seguido conviene testear tu FTP.</p>
+  <div class="approach-list" id="approach-list"></div>
+</div>
+
+<div class="step" data-step="4">
+  <h2>¿Qué días quieres entrenar?</h2>
+  <p class="hint">Elige los días y cuánto tiempo tienes disponible cada uno. Se repite igual cada semana del plan.</p>
+  <div class="days-grid" id="days-grid"></div>
+</div>
+
+<div class="step" data-step="5">
+  <h2>Nombra tu plan</h2>
+  <label>Nombre</label>
+  <input type="text" id="plan-name" placeholder="Ej. Preparación Gran Fondo Otoño">
+  <div id="generate-status"></div>
+</div>
+
+<div class="nav">
+  <button id="btn-back">Atrás</button>
+  <button id="btn-next" class="primary">Siguiente</button>
+</div>
+
+<script>
+  const APPROACH_INFO = [
+    { key: 'Conservative', desc: 'Progresión suave, más semanas de recuperación. Ideal si vuelves de un parón o priorizas consistencia.' },
+    { key: 'Moderate', desc: 'Progresión gradual con algo de trabajo de intensidad. Buen punto medio si entrenas con cierta regularidad.' },
+    { key: 'Balanced', desc: 'Enfoque polarizado clásico (80/20). Recomendado para la mayoría de ciclistas con base de entrenamiento establecida.', recommended: true },
+    { key: 'Demanding', desc: 'Más sesiones duras, progresión más rápida. Para ciclistas con buena base que buscan un salto de rendimiento.' },
+    { key: 'Aggressive', desc: 'Carga alta y frecuente. Solo si ya toleras bien el volumen e intensidad actuales.' },
+  ];
+  const WEEKDAYS = [
+    { iso: 1, label: 'Lunes' }, { iso: 2, label: 'Martes' }, { iso: 3, label: 'Miércoles' },
+    { iso: 4, label: 'Jueves' }, { iso: 5, label: 'Viernes' }, { iso: 6, label: 'Sábado' }, { iso: 7, label: 'Domingo' },
+  ];
+
+  let currentStep = 1;
+  const TOTAL_STEPS = 5;
+  let selectedEvent = null;
+  let selectedApproach = 'Balanced';
+  let selectedStartAction = null;
+
+  const state = { days: {} }; // { [iso]: {active, durationMin} }
+
+  document.querySelectorAll('#start-action-list .approach-card').forEach((card) => {
+    card.onclick = () => {
+      selectedStartAction = card.dataset.action;
+      document.querySelectorAll('#start-action-list .approach-card').forEach((c) =>
+        c.classList.toggle('active', c === card)
+      );
+      document.getElementById('start-duration-wrap').classList.toggle('hidden', selectedStartAction !== 'first-workout');
+    };
+  });
+
+  function renderApproaches() {
+    const list = document.getElementById('approach-list');
+    list.innerHTML = '';
+    APPROACH_INFO.forEach((a) => {
+      const card = document.createElement('div');
+      card.className = 'approach-card' + (a.key === selectedApproach ? ' active' : '');
+      card.dataset.key = a.key;
+      card.innerHTML = `<div class="name">${a.key}${a.recommended ? '<span class="badge">Recomendado</span>' : ''}</div>
+        <div class="desc">${a.desc}</div>`;
+      card.onclick = () => {
+        selectedApproach = a.key;
+        renderApproaches();
+      };
+      list.appendChild(card);
+    });
+  }
+
+  function renderDays() {
+    const grid = document.getElementById('days-grid');
+    grid.innerHTML = '';
+    WEEKDAYS.forEach((d) => {
+      if (!state.days[d.iso]) state.days[d.iso] = { active: false, durationMin: 60 };
+      const row = document.createElement('div');
+      row.className = 'day-row' + (state.days[d.iso].active ? ' active' : '');
+      row.innerHTML = `
+        <div class="day-toggle">${d.label}</div>
+        <div></div>
+        <div class="duration-wrap">
+          <input type="number" min="10" max="360" step="5" value="${state.days[d.iso].durationMin}">
+          <span>min</span>
+        </div>`;
+      row.querySelector('.day-toggle').onclick = () => {
+        state.days[d.iso].active = !state.days[d.iso].active;
+        renderDays();
+      };
+      row.querySelector('input').oninput = (e) => {
+        state.days[d.iso].durationMin = Number(e.target.value);
+      };
+      grid.appendChild(row);
+    });
+  }
+
+  document.querySelectorAll('.toggle-option').forEach((el) => {
+    el.onclick = () => {
+      selectedEvent = el.dataset.event;
+      document.querySelectorAll('.toggle-option').forEach((o) => o.classList.toggle('active', o === el));
+      document.getElementById('event-date-wrap').classList.toggle('hidden', selectedEvent !== 'yes');
+      document.getElementById('no-event-weeks-wrap').classList.toggle('hidden', selectedEvent !== 'no');
+    };
+  });
+
+  function showStep(n) {
+    currentStep = n;
+    document.querySelectorAll('.step').forEach((s) => s.classList.toggle('active', Number(s.dataset.step) === n));
+    document.querySelectorAll('.dot').forEach((d) => d.classList.toggle('done', Number(d.dataset.dot) <= n));
+    document.getElementById('btn-back').style.visibility = n === 1 ? 'hidden' : 'visible';
+    document.getElementById('btn-next').textContent = n === TOTAL_STEPS ? 'Generar plan' : 'Siguiente';
+  }
+
+  function validateStep(n) {
+    if (n === 1) return !!document.getElementById('start-date').value && !!selectedStartAction;
+    if (n === 2) {
+      if (!selectedEvent) return false;
+      if (selectedEvent === 'yes') return !!document.getElementById('event-date').value;
+      return Number(document.getElementById('weeks-if-no-event').value) >= 2;
+    }
+    if (n === 3) return !!selectedApproach;
+    if (n === 4) return Object.values(state.days).some((d) => d.active && d.durationMin > 0);
+    if (n === 5) return !!document.getElementById('plan-name').value.trim();
+    return true;
+  }
+
+  document.getElementById('btn-back').onclick = () => {
+    if (currentStep > 1) showStep(currentStep - 1);
+  };
+
+  document.getElementById('btn-next').onclick = () => {
+    if (!validateStep(currentStep)) {
+      alert('Completa este paso antes de seguir.');
+      return;
+    }
+    if (currentStep < TOTAL_STEPS) {
+      showStep(currentStep + 1);
+      return;
+    }
+    submitPlan();
+  };
+
+  function submitPlan() {
+    const days = Object.keys(state.days)
+      .map((iso) => ({ weekday: Number(iso), durationMin: state.days[iso].durationMin, active: state.days[iso].active }))
+      .filter((d) => d.active)
+      .map((d) => ({ weekday: d.weekday, durationMin: d.durationMin }));
+
+    const payload = {
+      startDate: document.getElementById('start-date').value,
+      startDateAction: selectedStartAction,
+      startDateDurationMin: Number(document.getElementById('start-duration').value) || 45,
+      hasEvent: selectedEvent === 'yes',
+      eventDate: document.getElementById('event-date').value || null,
+      weeksIfNoEvent: Number(document.getElementById('weeks-if-no-event').value) || 6,
+      approach: selectedApproach,
+      days: days,
+      planName: document.getElementById('plan-name').value.trim(),
+    };
+
+    const status = document.getElementById('generate-status');
+    status.className = '';
+    status.innerHTML = '<span class="spinner"></span>Generando tu plan con Claude — puede tardar unos segundos...';
+    document.getElementById('btn-next').disabled = true;
+    document.getElementById('btn-back').disabled = true;
+
+    google.script.run
+      .withSuccessHandler(onPlanSuccess)
+      .withFailureHandler(onPlanError)
+      .generateTrainingPlan(payload);
+  }
+
+  function onPlanSuccess(result) {
+    const status = document.getElementById('generate-status');
+    status.className = 'success';
+    let msg = `Listo. "${result.planName}": ${result.workoutsWritten} entrenamientos agregados a Calendario ` +
+      `(${result.weeksGenerated} semanas), cada uno con su duración y una sugerencia de hidratación.`;
+    if (result.ftpTestDates && result.ftpTestDates.length) {
+      msg += ` Tests de FTP programados: ${result.ftpTestDates.join(', ')}.`;
+    }
+    if (result.truncated) {
+      msg += ' Tu evento está más allá de este bloque — vuelve a correr el asistente más adelante para la fase de pico y tapering.';
+    }
+    if (result.missingDates && result.missingDates.length) {
+      msg += ` Nota: ${result.missingDates.length} fecha(s) no vinieron en la respuesta y quedaron sin tocar.`;
+    }
+    status.textContent = msg;
+    document.getElementById('btn-next').textContent = 'Listo';
+    document.getElementById('btn-next').disabled = false;
+    document.getElementById('btn-next').onclick = () => google.script.host.close();
+    document.getElementById('btn-back').disabled = false;
+  }
+
+  function onPlanError(err) {
+    const status = document.getElementById('generate-status');
+    status.className = 'error';
+    status.textContent = 'Error: ' + (err.message || err);
+    document.getElementById('btn-next').disabled = false;
+    document.getElementById('btn-back').disabled = false;
+  }
+
+  // --- Inicialización ---
+  renderApproaches();
+  renderDays();
+  showStep(1);
+
+  google.script.run.withSuccessHandler((ctx) => {
+    const el = document.getElementById('ftp-context');
+    el.textContent = ctx.ftpVigente
+      ? `FTP vigente: ${ctx.ftpVigente} W${ctx.nombre ? ' · ' + ctx.nombre : ''}`
+      : 'Aún no hay un FTP registrado en la pestaña Ciclista — el plan usará zonas genéricas hasta que registres uno.';
+
+    const startInput = document.getElementById('start-date');
+    if (ctx.todayISO) {
+      startInput.min = ctx.todayISO;
+      // Sugerir el próximo lunes como valor por defecto.
+      // Se usa UTC de punta a punta para evitar que el huso horario del navegador
+      // corra la fecha un día, ya que "YYYY-MM-DD" se parsea como medianoche UTC.
+      const today = new Date(ctx.todayISO + 'T00:00:00Z');
+      const day = today.getUTCDay() === 0 ? 7 : today.getUTCDay();
+      const delta = (1 - day + 7) % 7 || 7;
+      const nextMonday = new Date(today);
+      nextMonday.setUTCDate(today.getUTCDate() + delta);
+      startInput.value = nextMonday.toISOString().slice(0, 10);
+
+      const eventInput = document.getElementById('event-date');
+      eventInput.min = ctx.todayISO;
+    }
+  }).getWizardContext();
+</script>
+</body>
+</html>
