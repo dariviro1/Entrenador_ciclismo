@@ -1,6 +1,6 @@
-# App de entrenamiento de ciclismo
+# Dariviro Performance — Indoor Cycling
 
-Prototipo funcional que conecta potenciómetro, rodillo inteligente (FTMS) y
+Prototipo funcional que conecta potenciómetro, simulador inteligente (FTMS) y
 banda de FC vía Web Bluetooth, lee/guarda el calendario en Google Sheets,
 sigue la progresión de FTP y grafica la sesión en vivo.
 
@@ -31,9 +31,9 @@ Abre `http://localhost:8000` en Chrome o Edge.
 4. En "Credenciales" → "Crear credenciales" → "ID de cliente de OAuth",
    tipo **Aplicación web**. En "Orígenes de JavaScript autorizados" agrega
    `http://localhost:8000` (o el puerto que uses).
-5. Copia el Client ID generado y pégalo en `js/sheets.js`, en la constante `CLIENT_ID`.
+5. Copia el Client ID generado y pégalo en `sheets.js`, en la constante `CLIENT_ID`.
 6. Crea una hoja de cálculo en Google Sheets, cópiale el ID (está en la URL,
-   entre `/d/` y `/edit`) y pégalo en `js/app.js`, en `SPREADSHEET_ID`.
+   entre `/d/` y `/edit`) y pégalo en `app.js`, en `SPREADSHEET_ID`.
 
 ## 3. Estructura de la hoja de cálculo
 
@@ -71,15 +71,21 @@ falta completarlas a mano.
   batería), la app reintenta solo, con backoff, y avisa en el estado.
   Al reconectar el rodillo, reaplica automáticamente la potencia objetivo
   del intervalo en curso.
-- **Control ERG**: fija la potencia objetivo del rodillo por intervalo vía FTMS.
-- **Calendario en Sheets**: un editor dentro de la propia app (sección
-  "Editor de entrenamientos") para armar o modificar el entrenamiento de
-  cualquier fecha con un formulario — sin tocar JSON a mano.
-- **FTP y progresión**: pestaña `FTP` con historial de valores; puedes
-  registrar uno manualmente (ej. tras un test de 20 min) y pedirle a la app
-  que revise tus últimas sesiones y sugiera si conviene subirlo o bajarlo.
-  Los entrenamientos pueden definirse en `%FTP` en vez de vatios fijos, así
-  que al subir el FTP, las próximas sesiones se recalculan solas.
+- **Control ERG**: fija la potencia objetivo del rodillo por intervalo vía FTMS, y lo
+  reafirma cada pocos segundos para que no se "suelte" entre comandos.
+- **Calibración del Simulador**: desde el menú "⋯" → "Calibrar Simulador", si el rodillo
+  soporta el procedimiento estándar de spin-down (FTMS), la app pide subir a 40 km/h con
+  un velocímetro en pantalla y cronometra la desaceleración. Si el rodillo no lo soporta,
+  avisa que hay que calibrar desde la app del fabricante.
+- **Calendario en Sheets**: la app lee todos los entrenamientos de la pestaña
+  "Calendario" y los muestra en un desplegable ("Cargar entrenamiento") para
+  elegir cuál correr. Crear o editar entrenamientos se hace directamente en el
+  Sheet (a mano o con el generador de planes) — la app ya no trae un editor
+  propio.
+- **FTP**: la app lee el FTP vigente de la pestaña `FTP` (la fila más reciente)
+  para resolver los intervalos definidos en `%FTP` a vatios y para calcular el
+  TSS de cada sesión. Registrar nuevos valores de FTP se hace directamente en
+  esa pestaña del Sheet — la app ya no tiene una sección propia para eso.
 - **Sesión larga sin cortes**: el token de Google se renueva solo antes de
   vencer (los tokens de GIS duran ~1h), para que una sesión de 2+ horas no
   falle a mitad de camino guardando datos.

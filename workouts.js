@@ -29,6 +29,22 @@ export async function getWorkoutForDate(spreadsheetId, dateISO) {
   };
 }
 
+// Lee todos los entrenamientos guardados en el calendario (para el desplegable de
+// selección de la app), ordenados por fecha.
+export async function getAllWorkouts(spreadsheetId) {
+  const rows = await getSheetValues(spreadsheetId, `${SHEET}!A2:E1000`);
+  return rows
+    .filter((r) => r[0] && r[1])
+    .map((r) => ({
+      date: r[0],
+      name: r[1],
+      intervals: JSON.parse(r[2] || '[]'),
+      durationMin: r[3] || null,
+      hydration: r[4] || '',
+    }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
 // Crea el entrenamiento de una fecha, o lo reemplaza si ya existía uno.
 // Usado por el editor de entrenamientos dentro de la app (workout-editor.js).
 // La hidratación se calcula con la misma fórmula general de respaldo que usa

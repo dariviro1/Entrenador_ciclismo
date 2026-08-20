@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Entrenamiento de ciclismo</title>
+<title>Dariviro Performance</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -32,8 +32,9 @@
   header {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
     margin-bottom: 24px;
+    position: relative;
   }
   h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.02em; }
   h2 {
@@ -44,7 +45,6 @@
     color: var(--text-muted);
     margin: 0 0 12px;
   }
-  #workout-name { color: var(--text-muted); font-size: 14px; }
   section { margin-bottom: 28px; }
 
   .connect-row { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -62,6 +62,9 @@
   button:hover { border-color: var(--text-muted); }
   button.primary { background: var(--power); border-color: var(--power); color: #2B1B04; }
   button.primary:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--border); }
+  button.primary:disabled:hover { opacity: 0.45; }
 
   .gauges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .gauge {
@@ -90,19 +93,6 @@
   .target-row .label { font-size: 13px; color: var(--text-muted); }
   .target-row .value { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; color: var(--power); }
 
-  #timeline {
-    display: flex;
-    align-items: flex-end;
-    height: 64px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 4px;
-    gap: 2px;
-    margin-bottom: 24px;
-  }
-  .segment { background: var(--power); height: var(--h, 40%); border-radius: 2px; min-width: 2px; opacity: 0.85; }
-
   .chart-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -111,21 +101,6 @@
     height: 180px;
   }
 
-  .ftp-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .ftp-current { display: flex; align-items: baseline; gap: 8px; }
-  .ftp-current .value { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; color: var(--ftp); }
-  .ftp-current .label { font-size: 12px; color: var(--text-muted); }
-  .ftp-actions { display: flex; gap: 8px; align-items: center; }
   input[type="number"], input[type="text"], input[type="date"], select {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -135,69 +110,299 @@
     font-family: 'Inter', sans-serif;
     font-size: 13px;
   }
-  #ftp-input { width: 90px; }
-
-  .editor-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px;
-  }
-  .editor-top-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-  #editor-name { flex: 1; min-width: 160px; }
-  .editor-row {
-    display: grid;
-    grid-template-columns: 90px 100px 1fr 32px;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-  .editor-row .e-remove {
-    padding: 0;
-    height: 32px;
-    color: var(--hr);
-    border-color: var(--border);
-  }
-  .editor-actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-  #editor-status, #status { font-size: 13px; color: var(--text-muted); min-height: 18px; margin-top: 8px; }
+  #status { font-size: 13px; color: var(--text-muted); min-height: 18px; margin-top: 8px; }
 
   .controls { display: flex; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+
+  .header-left { display: flex; flex-direction: column; gap: 2px; }
+  .header-actions { display: flex; gap: 8px; position: relative; }
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    border-radius: 8px;
+  }
+  .popover {
+    position: absolute;
+    top: 44px;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 200px;
+    z-index: 20;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .hidden { display: none; }
+  .popover.hidden { display: none; }
+  .popover button { text-align: left; border-color: transparent; background: transparent; }
+  .popover button:hover { background: var(--bg); border-color: var(--border); }
+  #menu-discard { color: var(--hr); }
+
+  .gauges .gauge.target-gauge .value { color: var(--power); }
+  .header-alert { font-size: 12px; color: var(--hr); margin-top: 2px; }
+  .header-alert.hidden { display: none; }
+  .end-time-label {
+    font-size: 14px;
+    color: var(--text-muted);
+    text-align: center;
+    margin: 20px 0 28px;
+  }
+  .bottom-bar {
+    position: sticky;
+    z-index: 10;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 24px -20px -60px;
+    padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .version-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.8;
+    text-align: center;
+    flex: 1;
+  }
+  .intensity-control { display: flex; align-items: center; gap: 8px; }
+  .intensity-control .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+  #intensity-select { width: 84px; }
+  .devices-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #paired-count { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--hr); }
+  #paired-count.has-devices { color: var(--ftp); }
+  #devices-popover.popover { position: fixed; top: auto; bottom: 60px; right: 20px; left: auto; }
+
+  .chart-card.small { height: 130px; }
+
+  .toast {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100% - 40px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--ftp);
+    border-radius: 10px;
+    padding: 12px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    z-index: 50;
+    text-align: center;
+  }
+  .toast.toast-pause { border-left-color: var(--power); }
+  .toast.hidden { display: none; }
+
+  .countdown-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(16, 21, 31, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+  }
+  .countdown-overlay.hidden { display: none; }
+  .countdown-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 140px;
+    font-weight: 700;
+    color: var(--power);
+    animation: countdown-pulse 1s ease-out;
+  }
+  @keyframes countdown-pulse {
+    0% { transform: scale(1.6); opacity: 0; }
+    30% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .modal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    width: calc(100% - 40px);
+    max-width: 340px;
+  }
+  .modal-card h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--text);
+  }
+  .modal-card p { font-size: 13px; color: var(--text-muted); margin: 0 0 20px; }
+  .device-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .device-row:first-of-type { border-top: none; }
+  .device-row .device-connect-btn.connected {
+    color: var(--ftp);
+    border-color: var(--ftp);
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+  .modal-card.calibration { text-align: center; }
+  .calibration-status { font-size: 14px; color: var(--text); margin: 4px 0 18px; min-height: 20px; }
+  .speedo-svg { width: 220px; height: 190px; display: block; margin: 0 auto; }
+  .speedo-track, .speedo-fill {
+    fill: none;
+    stroke-width: 14;
+    stroke-linecap: round;
+  }
+  .speedo-track { stroke: var(--border); }
+  .speedo-fill { stroke: var(--power); transition: stroke-dashoffset 0.2s linear; }
+  .speedo-value { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; fill: var(--text); }
+  .speedo-unit { font-family: 'Inter', sans-serif; font-size: 12px; fill: var(--text-muted); }
+  .speedo-target { font-family: 'Inter', sans-serif; font-size: 11px; fill: var(--ftp); }
+  .calibration-timer {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--ftp);
+    margin-top: 4px;
+  }
+  .modal-actions.center { justify-content: center; }
+  .calibration-target { font-size: 12px; color: var(--ftp); margin-top: -6px; margin-bottom: 12px; }
 </style>
 </head>
 <body>
+<div id="toast" class="toast hidden"></div>
+<div id="countdown-overlay" class="countdown-overlay hidden">
+  <div id="countdown-number" class="countdown-number">5</div>
+</div>
+<div id="device-gate" class="countdown-overlay hidden">
+  <div class="modal-card">
+    <h2>Conecta tus dispositivos</h2>
+    <p>El <strong>Simulador</strong> es obligatorio para empezar. La cadencia y la frecuencia cardíaca son opcionales.</p>
+    <div class="device-row">
+      <span>Simulador</span>
+      <button id="gate-connect-trainer" class="device-connect-btn">Conectar</button>
+    </div>
+    <div class="device-row">
+      <span>Potenciómetro (cadencia)</span>
+      <button id="gate-connect-power" class="device-connect-btn">Conectar</button>
+    </div>
+    <div class="device-row">
+      <span>Banda de FC</span>
+      <button id="gate-connect-hr" class="device-connect-btn">Conectar</button>
+    </div>
+    <div class="modal-actions">
+      <button id="gate-cancel">Cancelar</button>
+      <button id="gate-begin" class="primary" disabled>Comenzar entrenamiento</button>
+    </div>
+  </div>
+</div>
+<div id="finish-modal" class="countdown-overlay hidden">
+  <div class="modal-card">
+    <h2>¡Muy buen esfuerzo!</h2>
+    <p>¿Deseas guardar este entrenamiento en tu historial?</p>
+    <div class="modal-actions">
+      <button id="finish-no">No</button>
+      <button id="finish-yes" class="primary">Sí</button>
+    </div>
+  </div>
+</div>
+<div id="calibration-modal" class="countdown-overlay hidden">
+  <div class="modal-card calibration">
+    <h2>Calibrar Simulador</h2>
+    <div id="calibration-status" class="calibration-status">Pedalea hasta alcanzar 40 km/h.</div>
+    <svg class="speedo-svg" viewBox="0 0 200 200">
+      <circle class="speedo-track" cx="100" cy="100" r="80"
+        stroke-dasharray="376.99 502.65" transform="rotate(135 100 100)"></circle>
+      <circle id="speedo-fill" class="speedo-fill" cx="100" cy="100" r="80"
+        stroke-dasharray="376.99 502.65" stroke-dashoffset="376.99" transform="rotate(135 100 100)"></circle>
+      <text id="speedo-value" x="100" y="105" text-anchor="middle" class="speedo-value">0</text>
+      <text x="100" y="128" text-anchor="middle" class="speedo-unit">km/h</text>
+    </svg>
+    <div class="calibration-target">Objetivo: 40 km/h</div>
+    <div id="calibration-timer" class="calibration-timer hidden">0:00</div>
+    <div class="modal-actions center">
+      <button id="calibration-cancel">Cancelar</button>
+      <button id="calibration-start" class="primary">Comenzar calibración</button>
+      <button id="calibration-retry" class="primary hidden">Reintentar</button>
+      <button id="calibration-close" class="primary hidden">Cerrar</button>
+    </div>
+  </div>
+</div>
+<div id="calibration-unsupported" class="countdown-overlay hidden">
+  <div class="modal-card">
+    <h2>Calibración no disponible</h2>
+    <p>Tu Simulador no soporta calibración por spin-down desde esta app. Usa la app oficial del fabricante para calibrarlo.</p>
+    <div class="modal-actions">
+      <button id="calibration-unsupported-close" class="primary">Cerrar</button>
+    </div>
+  </div>
+</div>
 <div class="wrap">
   <header>
-    <h1>Entrenamiento de hoy</h1>
-    <span id="workout-name">Sin cargar</span>
-  </header>
-
-  <section>
-    <h2>Sensores</h2>
-    <div class="connect-row">
-      <button id="connect-power">Conectar potenciómetro</button>
-      <button id="connect-trainer">Conectar rodillo</button>
-      <button id="connect-hr">Conectar banda FC</button>
+    <div class="header-left">
+      <h1 id="workout-title">Entrenamiento de hoy</h1>
+      <div id="header-alert" class="header-alert hidden"></div>
     </div>
-  </section>
+    <div class="header-actions">
+      <button id="pause-toggle" class="icon-btn" aria-label="Pausar" disabled>⏸</button>
+      <button id="menu-toggle" class="icon-btn" aria-label="Más opciones">⋯</button>
+      <div id="session-menu" class="popover hidden">
+        <button id="menu-calibrate">Calibrar Simulador</button>
+        <button id="menu-discard">Descartar y cerrar</button>
+        <button id="menu-save">Guardar y cerrar</button>
+      </div>
+    </div>
+  </header>
 
   <section>
     <div class="gauges">
       <div class="gauge"><div class="value" id="power">--</div><div class="label">Potencia (W)</div></div>
-      <div class="gauge"><div class="value" id="cadence">--</div><div class="label">Cadencia (rpm)</div></div>
+      <div class="gauge"><div class="value" id="interval-time">--:--</div><div class="label">Tiempo intervalo</div></div>
       <div class="gauge"><div class="value" id="hr">--</div><div class="label">FC (bpm)</div></div>
+      <div class="gauge target-gauge"><div class="value" id="target">--</div><div class="label">Objetivo (W)</div></div>
+      <div class="gauge"><div class="value" id="total-time">--:--</div><div class="label">Tiempo total</div></div>
+      <div class="gauge"><div class="value" id="cadence">--</div><div class="label">Cadencia (rpm)</div></div>
     </div>
   </section>
 
+  <div class="end-time-label">Hora fin estimada: <span id="end-time">--:--</span></div>
+
   <section>
-    <div class="target-row">
-      <span class="label">Objetivo del intervalo actual</span>
-      <span class="value"><span id="target">--</span> W</span>
-    </div>
-    <div class="target-row">
-      <span class="label">Hidratación sugerida</span>
-      <span class="value" id="hydration" style="color: var(--ftp); font-size: 14px;">--</span>
-    </div>
-    <div id="timeline"></div>
+    <h2>Perfil del entrenamiento</h2>
+    <div class="chart-card"><canvas id="profile-chart"></canvas></div>
+  </section>
+
+  <section>
+    <h2>Próximos intervalos</h2>
+    <div class="chart-card small"><canvas id="zoom-chart"></canvas></div>
   </section>
 
   <section>
@@ -206,48 +411,49 @@
   </section>
 
   <section>
-    <h2>FTP</h2>
-    <div class="ftp-card">
-      <div class="ftp-current">
-        <span class="value" id="ftp-value">--</span>
-        <span class="label">W vigentes</span>
-      </div>
-      <div class="ftp-actions">
-        <input type="number" id="ftp-input" placeholder="nuevo FTP">
-        <button id="save-ftp">Guardar</button>
-        <button id="check-ftp">Revisar progresión</button>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <h2>Editor de entrenamientos</h2>
-    <div class="editor-card">
-      <div class="editor-top-row">
-        <input type="date" id="editor-date">
-        <input type="text" id="editor-name" placeholder="Nombre del entrenamiento">
-      </div>
-      <div id="editor-rows"></div>
-      <div class="editor-actions">
-        <button id="editor-add-row">+ Intervalo</button>
-        <button id="editor-load">Cargar fecha</button>
-        <button id="editor-save" class="primary">Guardar en calendario</button>
-      </div>
-      <div id="editor-status"></div>
-    </div>
-  </section>
-
-  <section>
     <h2>Sesión</h2>
     <div class="controls">
-      <button id="load-workout">Cargar entrenamiento del día</button>
+      <button id="load-workout">Cargar entrenamiento</button>
+      <select id="workout-select" class="hidden"></select>
       <button id="start" class="primary">Iniciar</button>
-      <button id="stop">Detener</button>
     </div>
     <div id="status"></div>
   </section>
+
+  <section>
+    <div class="target-row">
+      <span class="label">Hidratación sugerida</span>
+      <span class="value" id="hydration" style="color: var(--ftp); font-size: 14px;">--</span>
+    </div>
+  </section>
 </div>
 
-<script type="module" src="js/app.js"></script>
+<footer class="bottom-bar">
+  <div class="intensity-control">
+    <span class="label">Intensity</span>
+    <select id="intensity-select">
+      <option value="80">80%</option>
+      <option value="85">85%</option>
+      <option value="90">90%</option>
+      <option value="95">95%</option>
+      <option value="100" selected>100%</option>
+      <option value="105">105%</option>
+      <option value="110">110%</option>
+      <option value="115">115%</option>
+      <option value="120">120%</option>
+    </select>
+  </div>
+  <div class="version-label">Dariviro Performance — Indoor Cycling V1.09</div>
+  <button id="devices-toggle" class="devices-btn">
+    Devices <span id="paired-count">0 Paired</span>
+  </button>
+</footer>
+<div id="devices-popover" class="popover hidden">
+  <button id="connect-power">Conectar potenciómetro para cadencia</button>
+  <button id="connect-trainer">Conectar Simulador</button>
+  <button id="connect-hr">Conectar banda FC</button>
+</div>
+
+<script type="module" src="app.js"></script>
 </body>
 </html>

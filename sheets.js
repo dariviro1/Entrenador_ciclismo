@@ -3,7 +3,7 @@
 // Antes de usar: sigue las instrucciones del README para crear tus credenciales
 // y reemplaza CLIENT_ID más abajo.
 
-const CLIENT_ID = 'TU_CLIENT_ID.apps.googleusercontent.com'; // reemplaza con el tuyo
+const CLIENT_ID = '332911730497-60nfmft84631u681cojrvfovh9nt4c9l.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
