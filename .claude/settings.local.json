@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m http.server 8811)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8811/index.html)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8811/app.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8811/profilechart.js)",
+      "Bash(npm ls *)",
+      "Bash(node -e \"require.resolve\\('playwright'\\)\")",
+      "Bash(npx --yes playwright --version)",
+      "Bash(npx --yes playwright install chromium --with-deps)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(node smoke.js)",
+      "Bash(git -C \"c:\\\\Users\\\\dariv\\\\Documents\\\\GitHub\\\\DRVR-ENTRENADOR CICLISMO\" status --short)",
+      "Bash(py --version)",
+      "PowerShell(Get-Command py -ErrorAction SilentlyContinue | Format-List; Get-Command chrome -ErrorAction SilentlyContinue; Test-Path \"$env:ProgramFiles\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\"; Test-Path \"${env:ProgramFiles\\(x86\\)}\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\"; Test-Path \"$env:LOCALAPPDATA\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\"; Get-Command msedge -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 16240 -Force -ErrorAction SilentlyContinue)",
+      "Bash(git -C \"c:\\\\Users\\\\dariv\\\\Documents\\\\GitHub\\\\DRVR-ENTRENADOR CICLISMO\" log --oneline -- sheets.js)",
+      "Bash(git -C \"c:\\\\Users\\\\dariv\\\\Documents\\\\GitHub\\\\DRVR-ENTRENADOR CICLISMO\" diff -- sheets.js)",
+      "Bash(git -C \"c:\\\\Users\\\\dariv\\\\Documents\\\\GitHub\\\\DRVR-ENTRENADOR CICLISMO\" show HEAD:sheets.js)",
+      "Read(//c/Users/dariv/.claude/projects/c--Users-dariv-Documents-GitHub-DRVR-ENTRENADOR-CICLISMO/memory/**)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}
