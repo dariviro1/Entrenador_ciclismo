@@ -186,21 +186,65 @@ async function setWorkoutType(activityId, accessToken) {
   if (!res.ok) throw new Error(`Strava: no se pudo etiquetar la actividad como "Workout" (${res.status})`);
 }
 
-// Genera el .tcx de la sesión y lo descarga al navegador (carpeta de Descargas por
-// defecto) para subirlo manualmente en strava.com/upload/select -- alternativa a
-// uploadActivity() para quien no tenga acceso de API de Strava (requiere plan pago desde
-// 2025) pero sí quiera subir sus entrenamientos a mano.
-export function downloadActivityFile({ name, startedAt, powerSamples, hrSamples, cadenceSamples }) {
-  if (!powerSamples.length) return;
+// Genera el .tcx de la sesión y lo guarda en disco para subirlo manualmente en
+// strava.com/upload/select -- alternativa a uploadActivity() para quien no tenga acceso
+// de API de Strava (requiere plan pago desde 2025) pero sí quiera subir sus
+// entrenamientos a mano.
+//
+// Usa la File System Access API (showSaveFilePicker) para que la persona elija carpeta
+// y nombre con el diálogo nativo "Guardar como", y --clave-- para poder confirmar que el
+// archivo quedó escrito de verdad: un <a download> nunca avisa si el guardado falló o si
+// el navegador lo bloqueó en silencio, así que después de escribir se relee el archivo
+// del disco y se compara su tamaño contra lo que se mandó a escribir.
+//
+// Devuelve { status, fileName } con status: 'saved' (confirmado en disco),
+// 'cancelled' (la persona cerró el diálogo) o 'unverified' (navegador sin soporte de
+// File System Access -- ej. Firefox -- se usó la descarga clásica, sin forma de
+// confirmar que llegó a destino). Lanza si el guardado se intentó pero falló.
+export async function saveActivityFile({ name, startedAt, powerSamples, hrSamples, cadenceSamples }) {
+  if (!powerSamples.length) throw new Error('No hay datos de la sesión para guardar.');
   const tcx = buildTCX({ startedAt, powerSamples, hrSamples, cadenceSamples });
   const safeName = name.replace(/[\\/:*?"<>|]/g, '_');
   const dateStr = startedAt.toISOString().slice(0, 10);
-
+  const suggestedName = `${dateStr}_${safeName}.tcx`;
   const blob = new Blob([tcx], { type: 'application/xml' });
+
+  if (typeof window.showSaveFilePicker !== 'function') {
+    downloadViaAnchor(blob, suggestedName);
+    return { status: 'unverified', fileName: suggestedName };
+  }
+
+  let handle;
+  try {
+    handle = await window.showSaveFilePicker({
+      suggestedName,
+      types: [{ description: 'Archivo TCX', accept: { 'application/xml': ['.tcx'] } }],
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') return { status: 'cancelled', fileName: null };
+    throw err;
+  }
+
+  const writable = await handle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+
+  // Confirmación real: relee el archivo ya cerrado y compara tamaños. Si algo se cortó
+  // a mitad de la escritura o el navegador no llegó a persistirlo, esto lo detecta en
+  // vez de asumir éxito solo porque write()/close() no tiraron error.
+  const writtenFile = await handle.getFile();
+  if (writtenFile.size !== blob.size) {
+    throw new Error(`El archivo se guardó incompleto (${writtenFile.size} de ${blob.size} bytes).`);
+  }
+
+  return { status: 'saved', fileName: handle.name };
+}
+
+function downloadViaAnchor(blob, fileName) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${dateStr}_${safeName}.tcx`;
+  link.download = fileName;
   document.body.appendChild(link);
   link.click();
   link.remove();

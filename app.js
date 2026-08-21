@@ -826,17 +826,25 @@ async function saveSummary() {
     avgCadence: avg(session.cadenceSamples),
     tss: computeTSS(sessionElapsed, normalizedPower, currentFTP),
   };
-  await history.appendSessionSummary(SPREADSHEET_ID, summary);
+  const startedAt = sessionStartedAt ?? new Date(Date.now() - sessionElapsed * 1000);
 
-  // Descarga el .tcx de la sesión para subirlo a mano en strava.com/upload/select
-  // (la subida automática por API exige un plan pago de Strava desde 2025).
-  strava.downloadActivityFile({
-    name: summary.workoutName,
-    startedAt: sessionStartedAt ?? new Date(Date.now() - sessionElapsed * 1000),
-    powerSamples: session.powerSamples,
-    hrSamples: session.hrSamples,
-    cadenceSamples: session.cadenceSamples,
-  });
+  // Se pide la ubicación del archivo .tcx primero, lo más pegado posible al click de
+  // "Guardar": el diálogo nativo (File System Access API) exige gesto de usuario
+  // reciente, y la llamada a Sheets de abajo puede tardar y consumir esa ventana.
+  let fileResult;
+  try {
+    fileResult = await strava.saveActivityFile({
+      name: summary.workoutName,
+      startedAt,
+      powerSamples: session.powerSamples,
+      hrSamples: session.hrSamples,
+      cadenceSamples: session.cadenceSamples,
+    });
+  } catch (err) {
+    fileResult = { status: 'error', fileName: null, error: err };
+  }
+
+  await history.appendSessionSummary(SPREADSHEET_ID, summary);
 
   // Strava (API) es "además de" Sheets, no "en vez de": si falla, se avisa pero no se
   // deshace ni bloquea el guardado en Sheets, que ya quedó hecho arriba.
@@ -844,7 +852,7 @@ async function saveSummary() {
     try {
       await strava.uploadActivity({
         name: summary.workoutName,
-        startedAt: sessionStartedAt ?? new Date(Date.now() - sessionElapsed * 1000),
+        startedAt,
         powerSamples: session.powerSamples,
         hrSamples: session.hrSamples,
         cadenceSamples: session.cadenceSamples,
@@ -852,6 +860,21 @@ async function saveSummary() {
     } catch (err) {
       showAlert(`Se guardó en Sheets, pero falló la subida a Strava: ${err.message}`);
     }
+  }
+
+  return fileResult;
+}
+
+function describeFileResult(fileResult) {
+  switch (fileResult?.status) {
+    case 'saved':
+      return ` Archivo "${fileResult.fileName}" guardado y verificado.`;
+    case 'unverified':
+      return ` Se descargó "${fileResult.fileName}" a tu carpeta de Descargas.`;
+    case 'cancelled':
+      return ' No se guardó el archivo del entrenamiento (se canceló el diálogo de guardado).';
+    default:
+      return ` No se pudo guardar el archivo del entrenamiento: ${fileResult?.error?.message ?? 'error desconocido'}.`;
   }
 }
 
@@ -863,10 +886,11 @@ async function finishSession() {
   sessionState = 'finished';
   const wantsSave = await askSaveToHistory();
   if (wantsSave) {
-    await saveSummary();
-    el.status.textContent = SAVED_MESSAGE;
+    const fileResult = await saveSummary();
+    const message = SAVED_MESSAGE + describeFileResult(fileResult);
+    el.status.textContent = message;
     resetToIdle();
-    showToast(SAVED_MESSAGE);
+    showToast(message);
   } else {
     el.status.textContent = 'Entrenamiento finalizado sin guardar.';
     resetToIdle();
@@ -878,10 +902,11 @@ async function saveAndClose() {
   if (sessionState === 'idle' || sessionState === 'finished') return;
   clearInterval(timer);
   await ble.stopWorkout().catch(() => {});
-  await saveSummary();
-  el.status.textContent = SAVED_MESSAGE;
+  const fileResult = await saveSummary();
+  const message = SAVED_MESSAGE + describeFileResult(fileResult);
+  el.status.textContent = message;
   resetToIdle();
-  showToast(SAVED_MESSAGE);
+  showToast(message);
 }
 
 // Menú "..." -> Descartar y cerrar: borra el progreso sin guardar nada.
