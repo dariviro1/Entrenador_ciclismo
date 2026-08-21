@@ -200,21 +200,35 @@ function intervalsToPoints(intervals) {
   return points;
 }
 
-// El eje Y se autoescala solo con los valores del entrenamiento; si el FTP queda por
-// encima de ese máximo (entrenamientos suaves, todos los targets bajos), su línea cae
-// fuera del área visible y el plugin la omite. Forzamos el techo del eje a que siempre
-// incluya el FTP, con un margen para que la línea y su etiqueta no queden pegadas al borde.
+// El eje Y se autoescala solo con los valores planeados del entrenamiento; si el FTP o la
+// potencia real entregada (que puede superar bastante el plan) quedan por encima de ese
+// máximo, la línea cae fuera del área visible. Forzamos el techo a cubrir siempre, como
+// mínimo, hasta el techo de la Zona 6 (Anaeróbica, ~150% FTP en el modelo Coggan) -- así
+// un pico real por encima del target planeado no se corta, sin depender de que el
+// entrenamiento cargado ya incluya un intervalo así de exigente.
+const POWER_ZONE_6_CEILING_RATIO = 1.5;
+
 function computeYAxisMax(intervals, ftp) {
   const maxTarget = intervals.reduce((max, i) => Math.max(max, i.targetPower), 0);
-  const ceiling = ftp ? Math.max(maxTarget, ftp) : maxTarget;
+  const zoneCeiling = ftp ? ftp * POWER_ZONE_6_CEILING_RATIO : 0;
+  const ceiling = Math.max(maxTarget, ftp || 0, zoneCeiling);
   return ceiling > 0 ? ceiling * 1.15 : undefined;
 }
 
-export function renderProfile(chart, intervals, ftp, hydrationReminders) {
+// FC máxima (pestaña "Ciclista") + margen: cubre incluso una sesión donde el ciclista
+// llega a su FC máxima real, sin que la línea quede pegada al borde superior.
+const HR_MAX_HEADROOM_RATIO = 1.05;
+
+function computeHrAxisMax(hrMax) {
+  return hrMax ? hrMax * HR_MAX_HEADROOM_RATIO : undefined;
+}
+
+export function renderProfile(chart, intervals, ftp, hydrationReminders, hrMax) {
   chart.data.datasets[0].data = intervalsToPoints(intervals);
   chart.$ftp = ftp || null;
   chart.$hydrationReminders = hydrationReminders || [];
   chart.options.scales.y.suggestedMax = computeYAxisMax(intervals, ftp);
+  chart.options.scales.y1.suggestedMax = computeHrAxisMax(hrMax);
   chart.options.scales.x.min = undefined;
   chart.options.scales.x.max = undefined;
   chart.update('none');
@@ -223,7 +237,7 @@ export function renderProfile(chart, intervals, ftp, hydrationReminders) {
 const ZOOM_WINDOW_BACK = 60; // segundos hacia atrás
 const ZOOM_WINDOW_FORWARD = 300; // segundos hacia adelante
 
-export function renderZoom(chart, intervals, ftp, elapsedSec, hydrationReminders) {
+export function renderZoom(chart, intervals, ftp, elapsedSec, hydrationReminders, hrMax) {
   const totalDuration = intervals.reduce((sum, i) => sum + i.duration, 0);
   let min = elapsedSec - ZOOM_WINDOW_BACK;
   let max = elapsedSec + ZOOM_WINDOW_FORWARD;
@@ -241,6 +255,7 @@ export function renderZoom(chart, intervals, ftp, elapsedSec, hydrationReminders
   chart.$ftp = ftp || null;
   chart.$hydrationReminders = hydrationReminders || [];
   chart.options.scales.y.suggestedMax = computeYAxisMax(intervals, ftp);
+  chart.options.scales.y1.suggestedMax = computeHrAxisMax(hrMax);
   chart.options.scales.x.min = min;
   chart.options.scales.x.max = max;
   chart.update('none');
@@ -251,15 +266,15 @@ export function setPlayhead(chart, elapsedSec) {
   chart.update('none');
 }
 
-// powerSamples/hrSamples: arrays con una muestra por segundo transcurrido de sesión
-// (session.powerSamples/hrSamples en app.js) -- el índice i corresponde al segundo i+1,
-// igual convención que usa pushSample() en livechart.js.
-function samplesToPoints(samples) {
-  return samples.map((y, i) => ({ x: i + 1, y }));
+// powerSamples/hrSamples/times son arrays paralelos: times[i] es el segundo de sesión al
+// que corresponde powerSamples[i]/hrSamples[i]. app.js las arma ya promediadas cada
+// pocos segundos (no una muestra por segundo) para que la línea no se vea tan "nerviosa".
+function toPoints(samples, times) {
+  return samples.map((y, i) => ({ x: times[i], y }));
 }
 
-export function renderActualTrace(chart, powerSamples, hrSamples) {
-  chart.data.datasets[1].data = samplesToPoints(powerSamples);
-  chart.data.datasets[2].data = samplesToPoints(hrSamples);
+export function renderActualTrace(chart, powerSamples, hrSamples, times) {
+  chart.data.datasets[1].data = toPoints(powerSamples, times);
+  chart.data.datasets[2].data = toPoints(hrSamples, times);
   chart.update('none');
 }

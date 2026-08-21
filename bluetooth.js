@@ -12,12 +12,24 @@ const SERVICE = {
 
 const CHAR = {
   cyclingPowerMeasurement: 'cycling_power_measurement',
+  cyclingPowerFeature: 0x2a65,
+  cyclingPowerControlPoint: 0x2a66,
   heartRateMeasurement: 'heart_rate_measurement',
   indoorBikeData: 0x2ad2,
   ftmsControlPoint: 0x2ad9,
   fitnessMachineFeature: 0x2acc,
   fitnessMachineStatus: 0x2ada,
   batteryLevel: 'battery_level',
+};
+
+// Opcodes del Cycling Power Control Point (spec Cycling Power Service del Bluetooth SIG).
+// A diferencia del spin-down del Simulador (una curva de desaceleración dinámica), esto es
+// una calibración de "offset a cero": el sensor ajusta su lectura base con las bielas
+// quietas y sin carga -- lo mismo que hace "zero offset" en las apps oficiales de
+// potenciómetros de biela/pedal (Stages, Quarq, Favero, etc.).
+const CP_OPCODE = {
+  startOffsetCompensation: 0x0c,
+  responseCode: 0x20,
 };
 
 // Opcodes del Fitness Machine Control Point (spec FTMS del Bluetooth SIG)
@@ -47,6 +59,7 @@ export const state = {
   trainerCadence: null,
   trainerSpeed: null, // km/h, de Indoor Bike Data -- usado por el velocímetro de calibración
   trainerSpinDownSupported: false, // se llena al conectar el Simulador, ver setupTrainer()
+  powerMeterOffsetCompensationSupported: false, // se llena al conectar el potenciómetro, ver setupPowerMeter()
   devices: { powerMeter: null, heartRate: null, trainer: null },
   // Estado real de conexión GATT (a diferencia de `devices`, que solo guarda la
   // referencia del dispositivo emparejado y nunca se limpia). Esto es lo que
@@ -68,8 +81,11 @@ const statusListeners = new Set();
 export function onStatus(cb) {
   statusListeners.add(cb);
 }
-function notifyStatus(message) {
-  statusListeners.forEach((cb) => cb(message));
+// kind: 'problem' (desconexión, falla) | 'resolved' (reconectado) -- así quien escucha
+// sabe si debe seguir mostrando una alerta o puede ocultarla, en vez de adivinar a
+// partir del texto del mensaje.
+function notifyStatus(message, kind = 'problem') {
+  statusListeners.forEach((cb) => cb(message, kind));
 }
 
 const connectionListeners = new Set();
@@ -106,7 +122,7 @@ function attachAutoReconnect(device, label, connectedKey, setupFn, onReconnected
       attempt += 1;
       try {
         await setupFn(device);
-        notifyStatus(`${label} reconectado.`);
+        notifyStatus(`${label} reconectado.`, 'resolved');
         if (onReconnected) onReconnected();
       } catch (err) {
         if (attempt < maxAttempts) {
@@ -160,9 +176,85 @@ async function setupPowerMeter(device) {
   const char = await service.getCharacteristic(CHAR.cyclingPowerMeasurement);
   await char.startNotifications();
   char.addEventListener('characteristicvaluechanged', handlePowerMeasurement);
+
+  // Cycling Power Feature (0x2A65): lectura única para saber si el sensor soporta
+  // calibración de offset antes de ofrecer la opción. Bit 9 (0x0200) del campo de 32
+  // bits = "Offset Compensation Supported" (spec CPS, Cycling Power Feature).
+  try {
+    const featureChar = await service.getCharacteristic(CHAR.cyclingPowerFeature);
+    const featureValue = await featureChar.readValue();
+    const features = featureValue.getUint32(0, true);
+    state.powerMeterOffsetCompensationSupported = (features & 0x0200) !== 0;
+  } catch (err) {
+    state.powerMeterOffsetCompensationSupported = false;
+  }
+
+  try {
+    cyclingPowerControlChar = await service.getCharacteristic(CHAR.cyclingPowerControlPoint);
+    await cyclingPowerControlChar.startNotifications();
+    cyclingPowerControlChar.addEventListener('characteristicvaluechanged', handlePowerControlResponse);
+  } catch (err) {
+    cyclingPowerControlChar = null;
+    state.powerMeterOffsetCompensationSupported = false;
+  }
+
   await trySetupBattery(server, 'powerMeter');
   state.connected.powerMeter = true;
   notifyConnectionChange();
+}
+
+let cyclingPowerControlChar = null;
+let offsetCompensationResolve = null;
+let offsetCompensationReject = null;
+
+function handlePowerControlResponse(event) {
+  const value = event.target.value;
+  const opcode = value.getUint8(0);
+  if (opcode !== CP_OPCODE.responseCode) return;
+  const requestOpcode = value.getUint8(1);
+  if (requestOpcode !== CP_OPCODE.startOffsetCompensation || !offsetCompensationResolve) return;
+
+  const resultCode = value.getUint8(2); // 1 = éxito (spec CPS, Response Value)
+  if (resultCode === 1) {
+    // Si el sensor devuelve el nuevo offset (sint16, spec CPS), lo mostramos; algunos
+    // firmwares no lo incluyen y alcanza con confirmar que la calibración terminó.
+    const offset = value.byteLength >= 5 ? value.getInt16(3, true) : null;
+    offsetCompensationResolve(offset);
+  } else {
+    offsetCompensationReject(new Error(`El potenciómetro rechazó la calibración (código ${resultCode}).`));
+  }
+  offsetCompensationResolve = null;
+  offsetCompensationReject = null;
+}
+
+// Calibración de "offset a cero" del potenciómetro (bielas/pedales): a diferencia del
+// spin-down del Simulador, no hay una curva que medir -- el sensor solo necesita estar
+// quieto y sin carga un momento. Solo tiene sentido llamarlo si
+// state.powerMeterOffsetCompensationSupported. Devuelve el offset informado por el
+// sensor (o null si no lo informó).
+export async function startPowerMeterOffsetCompensation() {
+  if (!cyclingPowerControlChar || !state.powerMeterOffsetCompensationSupported) {
+    throw new Error('Este potenciómetro no soporta calibración de offset por Bluetooth.');
+  }
+  return new Promise((resolve, reject) => {
+    offsetCompensationResolve = resolve;
+    offsetCompensationReject = reject;
+    cyclingPowerControlChar
+      .writeValueWithResponse(new Uint8Array([CP_OPCODE.startOffsetCompensation]))
+      .catch((err) => {
+        offsetCompensationResolve = null;
+        offsetCompensationReject = null;
+        reject(err);
+      });
+    // La spec no define un timeout; por las dudas, no dejamos la promesa colgada para
+    // siempre si el sensor nunca responde.
+    setTimeout(() => {
+      if (!offsetCompensationReject) return;
+      offsetCompensationReject(new Error('El potenciómetro no respondió a tiempo.'));
+      offsetCompensationResolve = null;
+      offsetCompensationReject = null;
+    }, 10000);
+  });
 }
 
 let lastCrank = null;

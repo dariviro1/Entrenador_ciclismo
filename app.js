@@ -7,7 +7,15 @@ import * as strava from './strava.js';
 import * as workouts from './workouts.js';
 import * as history from './history.js';
 import * as ftp from './ftp.js';
-import { initChart, pushSample, resetChart, resizeChart, setFTP as setLiveChartFTP } from './livechart.js';
+import * as cyclist from './cyclist.js';
+import {
+  initChart,
+  pushSample,
+  resetChart,
+  resizeChart,
+  setFTP as setLiveChartFTP,
+  setHrMax as setLiveChartHrMax,
+} from './livechart.js';
 import {
   createIntervalChart,
   renderProfile,
@@ -22,6 +30,7 @@ const ERG_REFRESH_SECONDS = 2; // cada cuántos segundos se reafirma el target E
 
 let workout = null;
 let currentFTP = null;
+let currentHrMax = null; // FC máxima (pestaña "Ciclista"), para calibrar el techo del eje de FC
 let currentIntervalIndex = 0;
 let intervalElapsed = 0;
 let sessionElapsed = 0;
@@ -30,17 +39,29 @@ let timer = null;
 let session = { powerSamples: [], hrSamples: [], cadenceSamples: [] };
 
 let sessionState = 'idle'; // 'idle' | 'running' | 'paused' | 'finished'
-let pauseReason = null; // 'manual' | 'auto' | null
+let pauseReason = null; // 'manual' | 'auto' | 'calibration' | null
 let zeroPowerStreak = 0;
 let intensityScale = 1;
-// 'trainer' | 'powerMeter' | null. null = automático (prioriza el potenciómetro si hay
-// varios sensores de potencia conectados). Se resetea si el sensor elegido se desconecta.
-let powerSourcePreference = null;
+// true mientras esta sesión de calibración fue quien pausó el entrenamiento (para
+// reanudarlo solo si fuimos nosotros los que lo pausamos, no si ya estaba en pausa manual).
+let pausedForCalibration = false;
+let wakeLock = null; // Screen Wake Lock activo mientras hay entrenamiento o calibración en curso
 
 let profileChart = null;
 let zoomChart = null;
 let availableWorkouts = [];
 let hydrationReminders = []; // segundos de sesión en los que conviene tomar agua
+
+// Las líneas de "Potencia real"/"FC real" de las gráficas se arman con un promedio cada
+// pocos segundos (no una muestra por segundo) -- igual criterio que el número grande de
+// Potencia (W), que ya promedia 3s para no saltar con cada pedaleo. session.powerSamples/
+// hrSamples (abajo) siguen grabándose segundo a segundo sin cambios: eso alimenta TSS,
+// potencia normalizada, historial y Strava, que si necesitan esa resolución fina.
+const CHART_TRACE_INTERVAL_SEC = 3;
+let chartTraceBuffer = { power: [], hr: [] };
+let chartPowerTrace = [];
+let chartHrTrace = [];
+let chartTraceTimes = [];
 
 const el = {
   power: document.getElementById('power'),
@@ -77,10 +98,8 @@ const el = {
   trainerBattery: document.getElementById('trainer-battery'),
   powerMeterBattery: document.getElementById('power-meter-battery'),
   hrBattery: document.getElementById('hr-battery'),
-  powerSourceTrainerLabel: document.getElementById('power-source-trainer-label'),
-  powerSourcePowerMeterLabel: document.getElementById('power-source-power-meter-label'),
-  powerSourceTrainerRadio: document.getElementById('power-source-trainer'),
-  powerSourcePowerMeterRadio: document.getElementById('power-source-power-meter'),
+  powerSourceTrainerBadge: document.getElementById('power-source-trainer-badge'),
+  powerSourcePowerMeterBadge: document.getElementById('power-source-power-meter-badge'),
   toast: document.getElementById('toast'),
   countdownOverlay: document.getElementById('countdown-overlay'),
   countdownNumber: document.getElementById('countdown-number'),
@@ -103,7 +122,17 @@ const el = {
   speedoFill: document.getElementById('speedo-fill'),
   speedoValue: document.getElementById('speedo-value'),
   calibrationUnsupported: document.getElementById('calibration-unsupported'),
+  calibrationUnsupportedMessage: document.getElementById('calibration-unsupported-message'),
   calibrationUnsupportedClose: document.getElementById('calibration-unsupported-close'),
+  calibrationChoiceModal: document.getElementById('calibration-choice-modal'),
+  calibrationChoiceTrainer: document.getElementById('calibration-choice-trainer'),
+  calibrationChoicePowerMeter: document.getElementById('calibration-choice-power-meter'),
+  calibrationChoiceCancel: document.getElementById('calibration-choice-cancel'),
+  powerMeterCalibrationModal: document.getElementById('power-meter-calibration-modal'),
+  powerMeterCalibrationStatus: document.getElementById('power-meter-calibration-status'),
+  powerMeterCalibrationStart: document.getElementById('power-meter-calibration-start'),
+  powerMeterCalibrationCancel: document.getElementById('power-meter-calibration-cancel'),
+  powerMeterCalibrationClose: document.getElementById('power-meter-calibration-close'),
 };
 
 function connectTrainerDevice() {
@@ -126,13 +155,6 @@ el.gateConnectHr.onclick = connectHeartRateDevice;
 el.loadWorkout.onclick = () => loadWorkoutList().catch(showError);
 el.workoutSelect.onchange = () => selectWorkoutFromList();
 el.start.onclick = () => beginCountdown().catch(showError);
-
-el.powerSourceTrainerRadio.onchange = () => {
-  powerSourcePreference = 'trainer';
-};
-el.powerSourcePowerMeterRadio.onchange = () => {
-  powerSourcePreference = 'powerMeter';
-};
 
 el.liveSessionToggle.onclick = () => {
   const nowHidden = el.liveSessionBody.classList.toggle('hidden');
@@ -174,7 +196,16 @@ el.menuStrava.onclick = () => {
 };
 el.menuCalibrate.onclick = () => {
   el.sessionMenu.classList.add('hidden');
+  openCalibrationChoice();
+};
+el.calibrationChoiceCancel.onclick = () => el.calibrationChoiceModal.classList.add('hidden');
+el.calibrationChoiceTrainer.onclick = () => {
+  el.calibrationChoiceModal.classList.add('hidden');
   openCalibration();
+};
+el.calibrationChoicePowerMeter.onclick = () => {
+  el.calibrationChoiceModal.classList.add('hidden');
+  openPowerMeterCalibration();
 };
 el.menuDiscard.onclick = () => {
   el.sessionMenu.classList.add('hidden');
@@ -198,13 +229,15 @@ el.intensitySelect.onchange = () => {
 // historial) sigue usando la lectura instantánea de ble.state, sin cambios.
 let displayPowerBuffer = [];
 
-// Resuelve qué sensor conectado alimenta el dato de potencia mostrado/grabado. Si el
-// usuario eligió uno explícitamente en Devices, se respeta esa elección; si no, por
-// defecto se prioriza el potenciómetro sobre el Simulador (comportamiento previo).
+// Resuelve qué sensor conectado alimenta el dato de potencia mostrado/grabado. Regla
+// fija, no elegible por la persona: el Simulador manda siempre que esté conectado -- es
+// el que de verdad ajusta su resistencia según la potencia entregada (modo ERG), así que
+// mostrar/grabar la del potenciómetro en paralelo daría dos números distintos para lo
+// mismo y los desalinearía. El potenciómetro de biela/pedales, en ese caso, solo aporta
+// cadencia (ver más abajo). Sin Simulador conectado, el potenciómetro pasa a ser la
+// única fuente de potencia posible.
 function getSelectedPower(state) {
-  if (powerSourcePreference === 'trainer') return state.trainerPower;
-  if (powerSourcePreference === 'powerMeter') return state.power;
-  return state.power ?? state.trainerPower;
+  return state.connected.trainer ? state.trainerPower : state.power;
 }
 
 ble.onData((state) => {
@@ -213,9 +246,11 @@ ble.onData((state) => {
   el.cadence.textContent = state.cadence ?? state.trainerCadence ?? '--';
   el.hr.textContent = state.heartRate ?? '--';
 
-  if (sessionState === 'paused' && pauseReason === 'auto') {
+  // Una pausa por calibración no debe reanudarse sola solo porque hay que pedalear
+  // para calibrar -- eso rompería el propio procedimiento de calibración.
+  if (sessionState === 'paused' && pauseReason !== 'calibration') {
     const currentPower = getSelectedPower(state) ?? 0;
-    if (currentPower > 0) resumeSession('auto').catch(showError);
+    if (currentPower > 0) resumeSession(pauseReason).catch(showError);
   }
 
   if (!el.calibrationModal.classList.contains('hidden')) {
@@ -235,8 +270,15 @@ setInterval(() => {
 
 // Reutiliza el status de conexión/reconexión del módulo BLE (desconexiones, reintentos, etc.)
 // Se muestra como alerta bajo el nombre del entrenamiento, no en el status de sesión.
-ble.onStatus((message) => {
-  showAlert(message);
+// 'resolved' (reconectado con éxito) oculta la alerta en vez de dejarla en rojo para
+// siempre -- antes se quedaba mostrando el problema aun después de solucionarse.
+ble.onStatus((message, kind) => {
+  if (kind === 'resolved') {
+    clearAlert();
+    showToast(message);
+  } else {
+    showAlert(message);
+  }
 });
 
 // El conteo de "Paired" refleja el estado real de conexión GATT, no solo si alguna vez
@@ -256,6 +298,9 @@ el.calibrationCancel.onclick = () => cancelCalibration();
 el.calibrationRetry.onclick = () => setCalibrationState('idle');
 el.calibrationClose.onclick = () => closeCalibration();
 el.calibrationUnsupportedClose.onclick = () => el.calibrationUnsupported.classList.add('hidden');
+el.powerMeterCalibrationStart.onclick = () => startPowerMeterCalibration();
+el.powerMeterCalibrationCancel.onclick = () => closePowerMeterCalibration();
+el.powerMeterCalibrationClose.onclick = () => closePowerMeterCalibration();
 
 initChart('live-chart');
 profileChart = createIntervalChart('profile-chart');
@@ -310,6 +355,42 @@ function clearAlert() {
   el.headerAlert.classList.add('hidden');
 }
 
+// Mantiene la pantalla encendida mientras hay entrenamiento (corriendo o en pausa) o
+// calibración en curso -- sin esto, el sistema operativo atenúa/apaga la pantalla por
+// inactividad de mouse/teclado, algo muy molesto en medio de una sesión.
+function shouldStayAwake() {
+  return (
+    sessionState === 'running' ||
+    sessionState === 'paused' ||
+    !el.calibrationModal.classList.contains('hidden') ||
+    !el.powerMeterCalibrationModal.classList.contains('hidden')
+  );
+}
+
+async function syncWakeLock() {
+  const needed = shouldStayAwake();
+  if (needed && !wakeLock) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+      });
+    } catch (err) {
+      // No crítico (ej. navegador sin soporte, o pestaña sin foco al pedirlo) -- la app
+      // sigue funcionando igual, solo sin este resguardo.
+    }
+  } else if (!needed && wakeLock) {
+    await wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+// El sistema libera el wake lock solo al ocultar la pestaña/minimizar; hay que volver a
+// pedirlo al recuperar el foco si seguimos en una sesión o calibración activa.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') syncWakeLock();
+});
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -337,6 +418,13 @@ async function loadWorkoutList() {
   const ftpRecord = await ftp.getCurrentFTP(SPREADSHEET_ID);
   currentFTP = ftpRecord?.ftp ?? null;
   setLiveChartFTP(currentFTP);
+
+  // La pestaña "Ciclista" es la misma que ya usa el generador de planes; si todavía no
+  // existe o falta la fila de FC máxima, seguimos sin ese techo (auto-escala como antes)
+  // en vez de bloquear la carga del entrenamiento por un dato opcional.
+  const cyclistProfile = await cyclist.getCyclistProfile(SPREADSHEET_ID).catch(() => null);
+  currentHrMax = cyclistProfile?.hrMax ?? null;
+  setLiveChartHrMax(currentHrMax);
 
   availableWorkouts = await workouts.getAllWorkouts(SPREADSHEET_ID);
   if (!availableWorkouts.length) {
@@ -448,10 +536,10 @@ function getScaledIntervals() {
 function refreshCharts() {
   if (!workout) return;
   const scaled = getScaledIntervals();
-  renderProfile(profileChart, scaled, currentFTP, hydrationReminders);
-  renderZoom(zoomChart, scaled, currentFTP, sessionElapsed, hydrationReminders);
-  renderActualTrace(profileChart, session.powerSamples, session.hrSamples);
-  renderActualTrace(zoomChart, session.powerSamples, session.hrSamples);
+  renderProfile(profileChart, scaled, currentFTP, hydrationReminders, currentHrMax);
+  renderZoom(zoomChart, scaled, currentFTP, sessionElapsed, hydrationReminders, currentHrMax);
+  renderActualTrace(profileChart, chartPowerTrace, chartHrTrace, chartTraceTimes);
+  renderActualTrace(zoomChart, chartPowerTrace, chartHrTrace, chartTraceTimes);
   setPlayhead(profileChart, sessionElapsed);
   setPlayhead(zoomChart, sessionElapsed);
 }
@@ -490,20 +578,13 @@ function refreshDeviceBatteries() {
   updateDeviceBattery(el.hrBattery, 'heartRate');
 }
 
-// Muestra el selector de "fuente de potencia" solo junto a sensores realmente conectados,
-// y si el sensor elegido se desconecta, vuelve al modo automático.
+// Marca junto a cada sensor conectado cuál de los dos alimenta la potencia en este
+// momento (ver getSelectedPower) -- es solo informativo, no elegible por la persona.
 function refreshPowerSourceUI() {
   const trainerConnected = ble.state.connected.trainer;
   const powerMeterConnected = ble.state.connected.powerMeter;
-
-  el.powerSourceTrainerLabel.classList.toggle('hidden', !trainerConnected);
-  el.powerSourcePowerMeterLabel.classList.toggle('hidden', !powerMeterConnected);
-
-  if (powerSourcePreference === 'trainer' && !trainerConnected) powerSourcePreference = null;
-  if (powerSourcePreference === 'powerMeter' && !powerMeterConnected) powerSourcePreference = null;
-
-  el.powerSourceTrainerRadio.checked = powerSourcePreference === 'trainer';
-  el.powerSourcePowerMeterRadio.checked = powerSourcePreference === 'powerMeter';
+  el.powerSourceTrainerBadge.classList.toggle('hidden', !trainerConnected);
+  el.powerSourcePowerMeterBadge.classList.toggle('hidden', !powerMeterConnected || trainerConnected);
 }
 
 function refreshDevicesPopover() {
@@ -560,6 +641,49 @@ function updateSpeedometer(speedKmh) {
   el.speedoValue.textContent = Math.round(clamped);
 }
 
+function showCalibrationUnsupported(message) {
+  el.calibrationUnsupportedMessage.textContent = message;
+  el.calibrationUnsupported.classList.remove('hidden');
+}
+
+// El Simulador (spin-down FTMS) y el potenciómetro (offset a cero, Cycling Power
+// Service) se calibran de formas distintas -- si hay más de uno conectado, primero
+// hay que elegir cuál. Si solo hay uno, va directo a su flujo sin preguntar.
+function openCalibrationChoice() {
+  const trainerOk = ble.state.connected.trainer;
+  const powerMeterOk = ble.state.connected.powerMeter;
+  if (!trainerOk && !powerMeterOk) {
+    showAlert('Conecta un sensor de potencia primero para calibrarlo.');
+    return;
+  }
+  if (trainerOk && !powerMeterOk) {
+    openCalibration();
+    return;
+  }
+  if (powerMeterOk && !trainerOk) {
+    openPowerMeterCalibration();
+    return;
+  }
+  el.calibrationChoiceModal.classList.remove('hidden');
+}
+
+// Si el entrenamiento está corriendo, lo pausa mientras dure la calibración (pedalear
+// para el spin-down, o cualquier movimiento durante el offset del potenciómetro, no debe
+// grabarse como datos de sesión ni disparar el ajuste de ERG del intervalo en curso). Si
+// ya estaba en pausa (manual, por ejemplo), se deja como estaba -- no se reanuda sola
+// después si nosotros no fuimos quienes la pausamos.
+function pauseForCalibration() {
+  if (sessionState === 'running') {
+    pauseSession('calibration');
+    pausedForCalibration = true;
+  }
+}
+function resumeAfterCalibration() {
+  if (!pausedForCalibration) return;
+  pausedForCalibration = false;
+  resumeSession('calibration').catch(showError);
+}
+
 let calibrationState = 'idle'; // 'idle' | 'spinning-up' | 'coasting' | 'success' | 'error'
 let calibrationTimerInterval = null;
 let calibrationStartedAt = 0;
@@ -570,12 +694,16 @@ function openCalibration() {
     return;
   }
   if (!ble.state.trainerSpinDownSupported) {
-    el.calibrationUnsupported.classList.remove('hidden');
+    showCalibrationUnsupported(
+      'Tu Simulador no soporta calibración por spin-down desde esta app. Usa la app oficial del fabricante para calibrarlo.'
+    );
     return;
   }
+  pauseForCalibration();
   updateSpeedometer(0);
   setCalibrationState('idle');
   el.calibrationModal.classList.remove('hidden');
+  syncWakeLock();
 }
 
 function setCalibrationState(next, extra) {
@@ -622,11 +750,15 @@ async function cancelCalibration() {
     await ble.cancelSpinDown().catch(() => {});
   }
   el.calibrationModal.classList.add('hidden');
+  resumeAfterCalibration();
+  syncWakeLock();
 }
 
 function closeCalibration() {
   clearInterval(calibrationTimerInterval);
   el.calibrationModal.classList.add('hidden');
+  resumeAfterCalibration();
+  syncWakeLock();
 }
 
 // Reacciona a las notificaciones de Fitness Machine Status solo mientras el modal de
@@ -638,6 +770,56 @@ function handleSpinDownStatus(subStatus) {
   else if (subStatus === 'stop-pedaling') setCalibrationState('coasting');
   else if (subStatus === 'success') setCalibrationState('success');
   else if (subStatus === 'error') setCalibrationState('error');
+}
+
+// --- Calibración del potenciómetro (offset a cero, Cycling Power Service) ---
+// A diferencia del spin-down (una curva de desaceleración que mide el Simulador), acá
+// no hay nada que animar: el sensor solo necesita estar quieto y sin carga un momento.
+
+function openPowerMeterCalibration() {
+  if (!ble.state.connected.powerMeter) {
+    showAlert('Conecta el potenciómetro primero para calibrarlo.');
+    return;
+  }
+  if (!ble.state.powerMeterOffsetCompensationSupported) {
+    showCalibrationUnsupported(
+      'Este potenciómetro no soporta calibración de offset por Bluetooth desde esta app. Usa la app oficial del fabricante (ej. Stages, Quarq, Favero) para calibrarlo.'
+    );
+    return;
+  }
+  pauseForCalibration();
+  setPowerMeterCalibrationState('idle');
+  el.powerMeterCalibrationModal.classList.remove('hidden');
+  syncWakeLock();
+}
+
+function setPowerMeterCalibrationState(next, extra) {
+  const messages = {
+    idle: 'Dejá las bielas/pedales quietos, sin pedalear ni apoyar peso, y tocá "Comenzar".',
+    running: 'Calibrando... no toques los pedales.',
+    success: extra || '¡Calibración exitosa!',
+    error: extra || 'La calibración falló. Puedes intentarlo de nuevo.',
+  };
+  el.powerMeterCalibrationStatus.textContent = messages[next];
+  el.powerMeterCalibrationStart.classList.toggle('hidden', next !== 'idle' && next !== 'error');
+  el.powerMeterCalibrationCancel.classList.toggle('hidden', next === 'success');
+  el.powerMeterCalibrationClose.classList.toggle('hidden', next !== 'success');
+}
+
+async function startPowerMeterCalibration() {
+  setPowerMeterCalibrationState('running');
+  try {
+    const offset = await ble.startPowerMeterOffsetCompensation();
+    setPowerMeterCalibrationState('success', offset != null ? `¡Calibración exitosa! Offset: ${offset}.` : undefined);
+  } catch (err) {
+    setPowerMeterCalibrationState('error', err.message);
+  }
+}
+
+function closePowerMeterCalibration() {
+  el.powerMeterCalibrationModal.classList.add('hidden');
+  resumeAfterCalibration();
+  syncWakeLock();
 }
 
 async function beginCountdown() {
@@ -676,6 +858,10 @@ async function startSession() {
   zeroPowerStreak = 0;
   session = { powerSamples: [], hrSamples: [], cadenceSamples: [] };
   displayPowerBuffer = [];
+  chartTraceBuffer = { power: [], hr: [] };
+  chartPowerTrace = [];
+  chartHrTrace = [];
+  chartTraceTimes = [];
   resetChart();
   sessionState = 'running';
   pauseReason = null;
@@ -688,6 +874,7 @@ async function startSession() {
   await applyCurrentInterval();
   timer = setInterval(tick, 1000);
   el.status.textContent = 'Entrenamiento en curso.';
+  syncWakeLock();
 }
 
 async function applyCurrentInterval() {
@@ -708,14 +895,16 @@ function pauseSession(reason) {
   pauseReason = reason;
   el.pauseToggle.textContent = '▶';
   const message =
-    reason === 'auto' ? 'En pausa: no se detecta potencia.' : 'Entrenamiento en pausa.';
+    reason === 'auto' ? 'En pausa: no se detecta potencia.'
+    : reason === 'calibration' ? 'En pausa mientras se calibra el sensor.'
+    : 'Entrenamiento en pausa.';
   el.status.textContent = message;
   showToast(message, 'pause', true); // persistente: se mantiene visible mientras dure la pausa
+  syncWakeLock();
 }
 
 async function resumeSession(reason) {
   if (sessionState !== 'paused') return;
-  if (reason === 'auto' && pauseReason !== 'auto') return; // no reanuda solo una pausa manual
   sessionState = 'running';
   pauseReason = null;
   zeroPowerStreak = 0;
@@ -724,7 +913,8 @@ async function resumeSession(reason) {
   timer = setInterval(tick, 1000);
   el.status.textContent = 'Entrenamiento en curso.';
   hideToast();
-  showToast('Entrenamiento reanudado.');
+  showToast(reason === 'calibration' ? 'Entrenamiento reanudado tras la calibración.' : 'Entrenamiento reanudado.');
+  syncWakeLock();
 }
 
 function tick() {
@@ -749,12 +939,26 @@ function tick() {
   session.powerSamples.push(power);
   session.hrSamples.push(hr);
   session.cadenceSamples.push(cadence);
-  pushSample(sessionElapsed, power, hr);
+
+  // Las líneas de "real" en las gráficas se actualizan cada CHART_TRACE_INTERVAL_SEC
+  // segundos como mínimo, con el promedio de ese tramo -- no cada segundo, para que no
+  // se vean tan "nerviosas" (mismo criterio que el número grande de Potencia (W)).
+  chartTraceBuffer.power.push(power);
+  chartTraceBuffer.hr.push(hr);
+  if (sessionElapsed % CHART_TRACE_INTERVAL_SEC === 0) {
+    const avg = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+    chartPowerTrace.push(avg(chartTraceBuffer.power));
+    chartHrTrace.push(avg(chartTraceBuffer.hr));
+    chartTraceTimes.push(sessionElapsed);
+    chartTraceBuffer = { power: [], hr: [] };
+
+    pushSample(sessionElapsed, chartPowerTrace[chartPowerTrace.length - 1], chartHrTrace[chartHrTrace.length - 1]);
+    renderActualTrace(profileChart, chartPowerTrace, chartHrTrace, chartTraceTimes);
+    renderActualTrace(zoomChart, chartPowerTrace, chartHrTrace, chartTraceTimes);
+  }
 
   updateTimeDisplays();
-  renderZoom(zoomChart, getScaledIntervals(), currentFTP, sessionElapsed, hydrationReminders);
-  renderActualTrace(profileChart, session.powerSamples, session.hrSamples);
-  renderActualTrace(zoomChart, session.powerSamples, session.hrSamples);
+  renderZoom(zoomChart, getScaledIntervals(), currentFTP, sessionElapsed, hydrationReminders, currentHrMax);
   setPlayhead(profileChart, sessionElapsed);
   setPlayhead(zoomChart, sessionElapsed);
 
@@ -928,6 +1132,7 @@ function resetToIdle() {
   el.start.disabled = false;
   el.start.classList.add('primary');
   hideToast();
+  syncWakeLock();
 }
 
 // Potencia normalizada (método de Coggan, el estándar que usan TrainerRoad/TrainingPeaks):

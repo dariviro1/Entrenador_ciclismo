@@ -2,7 +2,9 @@
 // Gráfica en vivo de potencia y FC durante la sesión, usando Chart.js (cargado por CDN en index.html).
 
 let chart = null;
-const WINDOW = 180; // segundos visibles en la ventana deslizante de la gráfica
+// app.js llama a pushSample() cada 3 segundos (no cada 1) para que la línea no se vea tan
+// "nerviosa" -- 60 puntos x 3s = 180s (3 min) visibles, igual que antes.
+const WINDOW = 60;
 
 function formatMMSS(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds));
@@ -55,6 +57,7 @@ export function initChart(canvasId) {
           title: { display: true, text: 'Potencia (W)', color: '#7C8698', font: { size: 10 } },
         },
         y1: {
+          beginAtZero: true,
           position: 'right',
           ticks: { color: '#7C8698' },
           grid: { drawOnChartArea: false },
@@ -79,12 +82,26 @@ export function initChart(canvasId) {
   chart.$ftp = null;
 }
 
+// Techo de potencia hasta la Zona 6 (Anaeróbica, ~150% FTP, modelo Coggan) para que un
+// pico real de potencia no se corte contra el borde del eje -- mismo criterio que
+// profilechart.js. Techo de FC = FC máxima + margen, desde la pestaña "Ciclista".
+const POWER_ZONE_6_CEILING_RATIO = 1.5;
+const HR_MAX_HEADROOM_RATIO = 1.05;
+
 // Dibuja (o quita) la línea de referencia de FTP en la gráfica en vivo, igual que en los
 // gráficos de perfil -- y asegura que el eje de potencia siempre la incluya en su rango.
 export function setFTP(ftp) {
   if (!chart) return;
   chart.$ftp = ftp || null;
-  chart.options.scales.y.suggestedMax = ftp ? ftp * 1.15 : undefined;
+  chart.options.scales.y.suggestedMax = ftp ? ftp * POWER_ZONE_6_CEILING_RATIO * 1.15 : undefined;
+  chart.update('none');
+}
+
+// Techo del eje de FC según la FC máxima real del ciclista (pestaña "Ciclista"), para que
+// una sesión que llegue a esfuerzo máximo no quede con la línea pegada al borde.
+export function setHrMax(hrMax) {
+  if (!chart) return;
+  chart.options.scales.y1.suggestedMax = hrMax ? hrMax * HR_MAX_HEADROOM_RATIO : undefined;
   chart.update('none');
 }
 

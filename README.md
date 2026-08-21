@@ -64,6 +64,24 @@ falta completarlas a mano.
 |------------|------------------|--------------------|
 | 2026-08-01 | 245              | test 20min         |
 
+**Ciclista** (opcional, pero recomendada — layout de etiqueta en columna A / valor en
+columna B, una fila por dato; agregar o quitar filas no rompe nada porque se busca por
+texto de etiqueta, no por número de fila fijo). La usa tanto el generador de planes de
+Apps Script como la app web: sin **FC máxima (bpm)**, la gráfica de FC se autoescala solo
+con los datos de la sesión (funciona, pero puede quedar más ajustada); con ella, el techo
+del eje de FC se calcula desde tu FC máxima real y nunca corta la línea.
+
+| A (etiqueta)              | B (valor) |
+|----------------------------|-----------|
+| Nombre                     | Daniel    |
+| Fecha de nacimiento (AAAA-MM-DD) | 1990-01-01 |
+| Peso (kg)                  | 75        |
+| Estatura (cm)               | 178       |
+| FC máxima (bpm)             | 190       |
+| FC en reposo (bpm)          | 55        |
+| Nivel                       | intermedio |
+| FTP vigente (W)             | 245       |
+
 ## 4. Conectar Strava (opcional)
 
 Cada entrenamiento guardado se puede subir también a la cuenta de Strava de quien lo
@@ -125,6 +143,10 @@ secreto del lado del servidor, en vez de dejarlo en `strava.js`.**
   "Conectar Strava"), cada entrenamiento guardado se sube también ahí como actividad
   "Virtual Ride" con potencia, FC y cadencia, además de quedar en Sheets. Ver la
   sección 4 más abajo para configurarlo.
+- **Escalas de las gráficas calibradas a vos**: el techo del eje de potencia cubre hasta
+  la Zona 6 (Anaeróbica, ~150% FTP) y el de FC usa tu FC máxima real (pestaña Ciclista) —
+  así un pico de potencia o de pulso por encima de lo planeado nunca corta la línea contra
+  el borde de la gráfica.
 
 ## Generar un plan de entrenamiento con Claude
 
