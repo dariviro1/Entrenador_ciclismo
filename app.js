@@ -3,10 +3,11 @@
 
 import * as ble from './bluetooth.js';
 import * as sheets from './sheets.js';
+import * as strava from './strava.js';
 import * as workouts from './workouts.js';
 import * as history from './history.js';
 import * as ftp from './ftp.js';
-import { initChart, pushSample, resetChart } from './livechart.js';
+import { initChart, pushSample, resetChart, resizeChart, setFTP as setLiveChartFTP } from './livechart.js';
 import {
   createIntervalChart,
   renderProfile,
@@ -24,6 +25,7 @@ let currentFTP = null;
 let currentIntervalIndex = 0;
 let intervalElapsed = 0;
 let sessionElapsed = 0;
+let sessionStartedAt = null; // Date real de inicio, para armar los timestamps del TCX de Strava
 let timer = null;
 let session = { powerSamples: [], hrSamples: [], cadenceSamples: [] };
 
@@ -31,10 +33,14 @@ let sessionState = 'idle'; // 'idle' | 'running' | 'paused' | 'finished'
 let pauseReason = null; // 'manual' | 'auto' | null
 let zeroPowerStreak = 0;
 let intensityScale = 1;
+// 'trainer' | 'powerMeter' | null. null = automático (prioriza el potenciómetro si hay
+// varios sensores de potencia conectados). Se resetea si el sensor elegido se desconecta.
+let powerSourcePreference = null;
 
 let profileChart = null;
 let zoomChart = null;
 let availableWorkouts = [];
+let hydrationReminders = []; // segundos de sesión en los que conviene tomar agua
 
 const el = {
   power: document.getElementById('power'),
@@ -52,6 +58,7 @@ const el = {
   pauseToggle: document.getElementById('pause-toggle'),
   menuToggle: document.getElementById('menu-toggle'),
   sessionMenu: document.getElementById('session-menu'),
+  menuStrava: document.getElementById('menu-strava'),
   menuCalibrate: document.getElementById('menu-calibrate'),
   menuDiscard: document.getElementById('menu-discard'),
   menuSave: document.getElementById('menu-save'),
@@ -60,6 +67,20 @@ const el = {
   devicesPopover: document.getElementById('devices-popover'),
   pairedCount: document.getElementById('paired-count'),
   workoutSelect: document.getElementById('workout-select'),
+  loadWorkout: document.getElementById('load-workout'),
+  liveSessionToggle: document.getElementById('live-session-toggle'),
+  liveSessionBody: document.getElementById('live-session-body'),
+  liveSessionChevron: document.getElementById('live-session-chevron'),
+  connectTrainerBtn: document.getElementById('connect-trainer'),
+  connectPowerBtn: document.getElementById('connect-power'),
+  connectHrBtn: document.getElementById('connect-hr'),
+  trainerBattery: document.getElementById('trainer-battery'),
+  powerMeterBattery: document.getElementById('power-meter-battery'),
+  hrBattery: document.getElementById('hr-battery'),
+  powerSourceTrainerLabel: document.getElementById('power-source-trainer-label'),
+  powerSourcePowerMeterLabel: document.getElementById('power-source-power-meter-label'),
+  powerSourceTrainerRadio: document.getElementById('power-source-trainer'),
+  powerSourcePowerMeterRadio: document.getElementById('power-source-power-meter'),
   toast: document.getElementById('toast'),
   countdownOverlay: document.getElementById('countdown-overlay'),
   countdownNumber: document.getElementById('countdown-number'),
@@ -95,16 +116,29 @@ function connectHeartRateDevice() {
   return ble.connectHeartRateMonitor().catch(showError);
 }
 
-document.getElementById('connect-power').onclick = connectPowerMeterDevice;
-document.getElementById('connect-trainer').onclick = connectTrainerDevice;
-document.getElementById('connect-hr').onclick = connectHeartRateDevice;
+el.connectPowerBtn.onclick = connectPowerMeterDevice;
+el.connectTrainerBtn.onclick = connectTrainerDevice;
+el.connectHrBtn.onclick = connectHeartRateDevice;
 el.gateConnectTrainer.onclick = connectTrainerDevice;
 el.gateConnectPower.onclick = connectPowerMeterDevice;
 el.gateConnectHr.onclick = connectHeartRateDevice;
 
-document.getElementById('load-workout').onclick = () => loadWorkoutList().catch(showError);
+el.loadWorkout.onclick = () => loadWorkoutList().catch(showError);
 el.workoutSelect.onchange = () => selectWorkoutFromList();
 el.start.onclick = () => beginCountdown().catch(showError);
+
+el.powerSourceTrainerRadio.onchange = () => {
+  powerSourcePreference = 'trainer';
+};
+el.powerSourcePowerMeterRadio.onchange = () => {
+  powerSourcePreference = 'powerMeter';
+};
+
+el.liveSessionToggle.onclick = () => {
+  const nowHidden = el.liveSessionBody.classList.toggle('hidden');
+  el.liveSessionChevron.classList.toggle('open', !nowHidden);
+  if (!nowHidden) resizeChart();
+};
 
 el.pauseToggle.onclick = () => {
   if (sessionState === 'running') pauseSession('manual');
@@ -126,6 +160,18 @@ document.addEventListener('click', () => {
   el.devicesPopover.classList.add('hidden');
 });
 
+el.menuStrava.onclick = () => {
+  el.sessionMenu.classList.add('hidden');
+  if (strava.isConnected()) {
+    if (confirm('¿Desconectar tu cuenta de Strava de esta app?')) {
+      strava.disconnect();
+      refreshStravaMenuItem();
+      showToast('Strava desconectado.');
+    }
+  } else {
+    strava.beginAuthorization(); // navega a strava.com; la app recarga al volver
+  }
+};
 el.menuCalibrate.onclick = () => {
   el.sessionMenu.classList.add('hidden');
   openCalibration();
@@ -152,20 +198,31 @@ el.intensitySelect.onchange = () => {
 // historial) sigue usando la lectura instantánea de ble.state, sin cambios.
 let displayPowerBuffer = [];
 
+// Resuelve qué sensor conectado alimenta el dato de potencia mostrado/grabado. Si el
+// usuario eligió uno explícitamente en Devices, se respeta esa elección; si no, por
+// defecto se prioriza el potenciómetro sobre el Simulador (comportamiento previo).
+function getSelectedPower(state) {
+  if (powerSourcePreference === 'trainer') return state.trainerPower;
+  if (powerSourcePreference === 'powerMeter') return state.power;
+  return state.power ?? state.trainerPower;
+}
+
 ble.onData((state) => {
-  const power = state.power ?? state.trainerPower;
+  const power = getSelectedPower(state);
   if (power != null) displayPowerBuffer.push(power);
   el.cadence.textContent = state.cadence ?? state.trainerCadence ?? '--';
   el.hr.textContent = state.heartRate ?? '--';
 
   if (sessionState === 'paused' && pauseReason === 'auto') {
-    const currentPower = state.power ?? state.trainerPower ?? 0;
+    const currentPower = getSelectedPower(state) ?? 0;
     if (currentPower > 0) resumeSession('auto').catch(showError);
   }
 
   if (!el.calibrationModal.classList.contains('hidden')) {
     updateSpeedometer(state.trainerSpeed ?? 0);
   }
+
+  refreshDeviceBatteries();
 });
 
 setInterval(() => {
@@ -186,6 +243,7 @@ ble.onStatus((message) => {
 // se emparejó -- así baja solo cuando un sensor se desconecta de verdad.
 ble.onConnectionChange(updatePairedCount);
 ble.onConnectionChange(refreshDeviceGate);
+ble.onConnectionChange(refreshDevicesPopover);
 ble.onSpinDownStatus(handleSpinDownStatus);
 
 el.gateCancel.onclick = () => closeDeviceGate(false);
@@ -203,6 +261,28 @@ initChart('live-chart');
 profileChart = createIntervalChart('profile-chart');
 zoomChart = createIntervalChart('zoom-chart');
 updatePairedCount();
+refreshDevicesPopover();
+
+function refreshStravaMenuItem() {
+  if (strava.isConnected()) {
+    const athlete = strava.getAthleteName();
+    el.menuStrava.textContent = athlete ? `✓ Strava: ${athlete} (desconectar)` : '✓ Strava conectado (desconectar)';
+  } else {
+    el.menuStrava.textContent = 'Conectar Strava';
+  }
+}
+
+// Si volvemos del redirect de autorización de Strava (?code=...), completa la conexión;
+// si no, no hace nada -- es el caso normal de cualquier otra carga de página.
+strava.handleAuthorizationRedirect()
+  .then((connected) => {
+    if (connected) showToast('Cuenta de Strava conectada.');
+    refreshStravaMenuItem();
+  })
+  .catch((err) => {
+    showError(err);
+    refreshStravaMenuItem();
+  });
 
 let toastTimer = null;
 // persistent: si es true, el toast no se auto-oculta -- hay que llamar hideToast() a mano
@@ -236,6 +316,10 @@ function sleep(ms) {
 
 async function ensureSignedIn() {
   sheets.initGoogleClient();
+  // Sin este chequeo, cada clic en "Cargar entrenamiento" volvía a llamar
+  // requestAccessToken() aunque ya hubiera una sesión vigente, lo que hacía que GIS
+  // abriera y cerrara una ventana/iframe de más cada vez.
+  if (sheets.isSignedIn()) return;
   await sheets.signIn();
 }
 
@@ -244,8 +328,15 @@ async function loadWorkoutList() {
   el.status.textContent = 'Conectando con Google Sheets...';
   await ensureSignedIn();
 
+  // Ya con la sesión de Google iniciada, este botón no tiene más nada que hacer -- se
+  // desactiva y el amarillo (la acción a seguir) pasa al desplegable de entrenamientos.
+  el.loadWorkout.disabled = true;
+  el.loadWorkout.textContent = '✓ Sheets conectado';
+  el.loadWorkout.classList.remove('primary');
+
   const ftpRecord = await ftp.getCurrentFTP(SPREADSHEET_ID);
   currentFTP = ftpRecord?.ftp ?? null;
+  setLiveChartFTP(currentFTP);
 
   availableWorkouts = await workouts.getAllWorkouts(SPREADSHEET_ID);
   if (!availableWorkouts.length) {
@@ -267,7 +358,69 @@ async function loadWorkoutList() {
   });
   el.workoutSelect.value = '';
   el.workoutSelect.classList.remove('hidden');
+  el.workoutSelect.classList.add('primary');
   el.status.textContent = 'Elige un entrenamiento del listado.';
+}
+
+// Extrae los ml de agua del texto ya calculado en la hoja (ej. "825 ml agua + 1 sobre
+// de hidratante") en vez de recalcularlos, para no duplicar la fórmula de hydration.js
+// y mantener las líneas de las gráficas siempre consistentes con lo que muestra la app.
+function parseHydrationMl(hydrationText) {
+  const match = /(\d+)\s*ml/.exec(hydrationText || '');
+  return match ? Number(match[1]) : 0;
+}
+
+// Reparte recordatorios de "tomar agua": más volumen sugerido, más recordatorios (uno
+// cada ~100 ml, un trago típico). A diferencia de repartirlos por partes iguales en el
+// tiempo total (podían caer en medio de un esfuerzo fuerte), los ubica dentro de los
+// tramos del entrenamiento donde de verdad conviene tomar agua -- todo lo que no sea
+// umbral o más arriba (zonas de Coggan: recuperación/endurance/tempo, hasta ~88% FTP).
+// Por encima de eso (umbral, VO2max, anaeróbico) no se recomienda tomar.
+const ML_PER_HYDRATION_REMINDER = 100;
+const HYDRATABLE_INTENSITY_RATIO = 0.88; // %FTP (o del pico del entrenamiento) por debajo del cual sí conviene recomendar tomar agua
+const MIN_RECOVERY_DURATION_SEC = 20; // tramos más cortos no dan tiempo real a tomar agua
+
+function computeHydrationReminders(waterMl, intervals, ftpValue) {
+  const totalDurationSec = intervals.reduce((sum, i) => sum + i.duration, 0);
+  if (!waterMl || !totalDurationSec) return [];
+  const count = Math.max(1, Math.round(waterMl / ML_PER_HYDRATION_REMINDER));
+
+  let cursor = 0;
+  const placed = intervals.map((interval) => {
+    const start = cursor;
+    cursor += interval.duration;
+    return { start, duration: interval.duration, targetPower: interval.targetPower };
+  });
+
+  const maxTarget = Math.max(0, ...placed.map((i) => i.targetPower));
+  const threshold = (ftpValue || maxTarget) * HYDRATABLE_INTENSITY_RATIO;
+  let recovery = placed.filter((i) => i.targetPower <= threshold && i.duration >= MIN_RECOVERY_DURATION_SEC);
+
+  // Si todos los tramos son muy exigentes (ej. un test a bloque único por encima del
+  // umbral), usa los de menor intensidad relativa del propio entrenamiento como mejor
+  // alternativa disponible -- mejor recomendar en el momento "menos malo" que no
+  // recomendar tomar agua en toda la sesión.
+  if (!recovery.length) {
+    recovery = [...placed].sort((a, b) => a.targetPower - b.targetPower).slice(0, Math.max(1, Math.ceil(placed.length / 2)));
+    recovery.sort((a, b) => a.start - b.start);
+  }
+
+  // Reparte los recordatorios entre esos tramos proporcional a su duración -- uno más
+  // largo recibe más de un recordatorio -- y los ubica en partes iguales dentro de cada uno.
+  const totalRecoveryDuration = recovery.reduce((sum, i) => sum + i.duration, 0);
+  const times = [];
+  let remaining = count;
+  recovery.forEach((interval, idx) => {
+    const isLast = idx === recovery.length - 1;
+    const share = isLast ? remaining : Math.max(1, Math.round((interval.duration / totalRecoveryDuration) * count));
+    const n = Math.min(remaining, share);
+    for (let k = 1; k <= n; k++) {
+      times.push(Math.round(interval.start + (interval.duration * k) / (n + 1)));
+    }
+    remaining -= n;
+  });
+
+  return times.sort((a, b) => a - b);
 }
 
 function selectWorkoutFromList() {
@@ -276,7 +429,10 @@ function selectWorkoutFromList() {
   workout = { name: raw.name, intervals: ftp.resolveIntervalsToWatts(raw.intervals, currentFTP) };
   el.workoutTitle.textContent = workout.name;
   el.hydration.textContent = raw.hydration || 'Sin datos';
+  hydrationReminders = computeHydrationReminders(parseHydrationMl(raw.hydration), workout.intervals, currentFTP);
   refreshCharts();
+  el.workoutSelect.classList.remove('primary');
+  el.start.classList.add('primary');
   el.status.textContent = 'Entrenamiento cargado. Listo para empezar.';
 }
 
@@ -292,33 +448,76 @@ function getScaledIntervals() {
 function refreshCharts() {
   if (!workout) return;
   const scaled = getScaledIntervals();
-  renderProfile(profileChart, scaled, currentFTP);
-  renderZoom(zoomChart, scaled, currentFTP, sessionElapsed);
+  renderProfile(profileChart, scaled, currentFTP, hydrationReminders);
+  renderZoom(zoomChart, scaled, currentFTP, sessionElapsed, hydrationReminders);
   renderActualTrace(profileChart, session.powerSamples, session.hrSamples);
   renderActualTrace(zoomChart, session.powerSamples, session.hrSamples);
   setPlayhead(profileChart, sessionElapsed);
   setPlayhead(zoomChart, sessionElapsed);
 }
 
-function refreshGateRow(button, connected) {
+function refreshConnectButton(button, connected) {
   button.textContent = connected ? '✓ Conectado' : 'Conectar';
   button.disabled = connected;
   button.classList.toggle('connected', connected);
 }
 
+// Al menos un sensor de potencia (Simulador o potenciómetro/biela/pedales) es lo mínimo
+// indispensable para empezar; el resto es opcional.
+function hasPowerSource() {
+  return ble.state.connected.trainer || ble.state.connected.powerMeter;
+}
+
 function refreshDeviceGate() {
-  refreshGateRow(el.gateConnectTrainer, ble.state.connected.trainer);
-  refreshGateRow(el.gateConnectPower, ble.state.connected.powerMeter);
-  refreshGateRow(el.gateConnectHr, ble.state.connected.heartRate);
-  el.gateBegin.disabled = !ble.state.connected.trainer;
+  refreshConnectButton(el.gateConnectTrainer, ble.state.connected.trainer);
+  refreshConnectButton(el.gateConnectPower, ble.state.connected.powerMeter);
+  refreshConnectButton(el.gateConnectHr, ble.state.connected.heartRate);
+  el.gateBegin.disabled = !hasPowerSource();
+}
+
+function updateDeviceBattery(badgeEl, key) {
+  const value = ble.state.battery[key];
+  if (value == null) {
+    badgeEl.classList.add('hidden');
+  } else {
+    badgeEl.textContent = `🔋 ${value}%`;
+    badgeEl.classList.remove('hidden');
+  }
+}
+function refreshDeviceBatteries() {
+  updateDeviceBattery(el.trainerBattery, 'trainer');
+  updateDeviceBattery(el.powerMeterBattery, 'powerMeter');
+  updateDeviceBattery(el.hrBattery, 'heartRate');
+}
+
+// Muestra el selector de "fuente de potencia" solo junto a sensores realmente conectados,
+// y si el sensor elegido se desconecta, vuelve al modo automático.
+function refreshPowerSourceUI() {
+  const trainerConnected = ble.state.connected.trainer;
+  const powerMeterConnected = ble.state.connected.powerMeter;
+
+  el.powerSourceTrainerLabel.classList.toggle('hidden', !trainerConnected);
+  el.powerSourcePowerMeterLabel.classList.toggle('hidden', !powerMeterConnected);
+
+  if (powerSourcePreference === 'trainer' && !trainerConnected) powerSourcePreference = null;
+  if (powerSourcePreference === 'powerMeter' && !powerMeterConnected) powerSourcePreference = null;
+
+  el.powerSourceTrainerRadio.checked = powerSourcePreference === 'trainer';
+  el.powerSourcePowerMeterRadio.checked = powerSourcePreference === 'powerMeter';
+}
+
+function refreshDevicesPopover() {
+  refreshConnectButton(el.connectTrainerBtn, ble.state.connected.trainer);
+  refreshConnectButton(el.connectPowerBtn, ble.state.connected.powerMeter);
+  refreshConnectButton(el.connectHrBtn, ble.state.connected.heartRate);
+  refreshPowerSourceUI();
+  refreshDeviceBatteries();
 }
 
 let gateResolve = null;
 
-// El Simulador es lo mínimo indispensable para empezar; el resto es opcional.
-// Si ya está conectado, se resuelve al toque sin mostrar nada.
 function ensureDevicesReady() {
-  if (ble.state.connected.trainer) return Promise.resolve(true);
+  if (hasPowerSource()) return Promise.resolve(true);
   return new Promise((resolve) => {
     gateResolve = resolve;
     refreshDeviceGate();
@@ -473,6 +672,7 @@ async function startSession() {
   currentIntervalIndex = 0;
   intervalElapsed = 0;
   sessionElapsed = 0;
+  sessionStartedAt = new Date();
   zeroPowerStreak = 0;
   session = { powerSamples: [], hrSamples: [], cadenceSamples: [] };
   displayPowerBuffer = [];
@@ -482,7 +682,9 @@ async function startSession() {
   el.pauseToggle.disabled = false;
   el.pauseToggle.textContent = '⏸';
   refreshCharts();
-  await ble.startWorkout();
+  // El control ERG solo existe si hay un Simulador FTMS conectado; con solo un
+  // potenciómetro/biela como fuente de potencia, la sesión corre sin control de resistencia.
+  if (ble.state.connected.trainer) await ble.startWorkout();
   await applyCurrentInterval();
   timer = setInterval(tick, 1000);
   el.status.textContent = 'Entrenamiento en curso.';
@@ -496,7 +698,7 @@ async function applyCurrentInterval() {
   }
   const target = scaleTarget(interval);
   el.target.textContent = target;
-  await ble.setTargetPower(target);
+  if (ble.state.connected.trainer) await ble.setTargetPower(target);
 }
 
 function pauseSession(reason) {
@@ -526,10 +728,9 @@ async function resumeSession(reason) {
 }
 
 function tick() {
-  const power = ble.state.power ?? ble.state.trainerPower ?? 0;
-  const trainerPower = ble.state.trainerPower ?? 0;
+  const power = getSelectedPower(ble.state) ?? 0;
 
-  if (power === 0 && trainerPower === 0) {
+  if (power === 0) {
     zeroPowerStreak += 1;
     if (zeroPowerStreak >= ZERO_POWER_STREAK_TO_AUTOPAUSE) {
       pauseSession('auto');
@@ -551,7 +752,7 @@ function tick() {
   pushSample(sessionElapsed, power, hr);
 
   updateTimeDisplays();
-  renderZoom(zoomChart, getScaledIntervals(), currentFTP, sessionElapsed);
+  renderZoom(zoomChart, getScaledIntervals(), currentFTP, sessionElapsed, hydrationReminders);
   renderActualTrace(profileChart, session.powerSamples, session.hrSamples);
   renderActualTrace(zoomChart, session.powerSamples, session.hrSamples);
   setPlayhead(profileChart, sessionElapsed);
@@ -626,6 +827,22 @@ async function saveSummary() {
     tss: computeTSS(sessionElapsed, normalizedPower, currentFTP),
   };
   await history.appendSessionSummary(SPREADSHEET_ID, summary);
+
+  // Strava es "además de" Sheets, no "en vez de": si falla, se avisa pero no se
+  // deshace ni bloquea el guardado en Sheets, que ya quedó hecho arriba.
+  if (strava.isConnected()) {
+    try {
+      await strava.uploadActivity({
+        name: summary.workoutName,
+        startedAt: sessionStartedAt ?? new Date(Date.now() - sessionElapsed * 1000),
+        powerSamples: session.powerSamples,
+        hrSamples: session.hrSamples,
+        cadenceSamples: session.cadenceSamples,
+      });
+    } catch (err) {
+      showAlert(`Se guardó en Sheets, pero falló la subida a Strava: ${err.message}`);
+    }
+  }
 }
 
 const SAVED_MESSAGE = 'Muy buen esfuerzo, el entrenamiento ha sido guardado en tu historial.';

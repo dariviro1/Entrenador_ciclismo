@@ -9,6 +9,15 @@ const ACTUAL_POWER_COLOR = '#EDEFF3';
 const HR_COLOR = '#E2574C';
 const FTP_COLOR = '#4FB8C4';
 const PLAYHEAD_COLOR = '#F2E63B';
+const HYDRATION_COLOR = '#63C7FF';
+const HYDRATION_MARKER_GAP = 16; // separación (px) entre el eje y la gota, reservada vía layout.padding.bottom
+
+function formatMMSS(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
 
 const ftpLinePlugin = {
   id: 'ftpLine',
@@ -55,7 +64,39 @@ const playheadPlugin = {
   },
 };
 
-Chart.register(ftpLinePlugin, playheadPlugin);
+// Líneas verticales que marcan cuándo tomar agua durante el entrenamiento, repartidas
+// a lo largo de la duración total según el volumen de hidratación sugerido (más ml,
+// más recordatorios) -- ver computeHydrationReminders() en app.js.
+const hydrationLinesPlugin = {
+  id: 'hydrationLines',
+  afterDraw(chart) {
+    const times = chart.$hydrationReminders;
+    if (!times || !times.length) return;
+    const { ctx, chartArea, scales } = chart;
+    ctx.save();
+    ctx.strokeStyle = HYDRATION_COLOR;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.fillStyle = HYDRATION_COLOR;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (const t of times) {
+      const x = scales.x.getPixelForValue(t);
+      if (x < chartArea.left || x > chartArea.right) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      // La gota va debajo del área graficada (en el margen reservado con
+      // layout.padding.bottom), no encima de la curva.
+      ctx.fillText('💧', x, chartArea.bottom + 2);
+    }
+    ctx.restore();
+  },
+};
+
+Chart.register(ftpLinePlugin, playheadPlugin, hydrationLinesPlugin);
 
 export function createIntervalChart(canvasId) {
   const ctx = document.getElementById(canvasId).getContext('2d');
@@ -106,16 +147,42 @@ export function createIntervalChart(canvasId) {
       maintainAspectRatio: false,
       parsing: false,
       interaction: { intersect: false },
-      plugins: { legend: { labels: { color: '#C7CDD9', boxWidth: 12, font: { size: 10 } } } },
+      // Margen reservado debajo del área graficada para que las gotas de hidratación
+      // (hydrationLinesPlugin) queden claramente fuera de la curva, no superpuestas.
+      layout: { padding: { bottom: HYDRATION_MARKER_GAP } },
+      // La leyenda vive como HTML debajo de la gráfica (una fila por dataset, ver
+      // .chart-legend en index.html) -- más legible que la fila horizontal de Chart.js.
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            // Por defecto el título del tooltip muestra el x crudo (segundos desde el
+            // inicio del entrenamiento) -- lo mostramos como m:ss, mucho más legible.
+            title: (items) => (items.length ? formatMMSS(items[0].parsed.x) : ''),
+          },
+        },
+      },
       scales: {
         x: { type: 'linear', display: false },
-        y: { beginAtZero: true, ticks: { color: '#7C8698' }, grid: { color: '#2A3244' } },
-        y1: { beginAtZero: true, position: 'right', ticks: { color: '#7C8698' }, grid: { drawOnChartArea: false } },
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#7C8698' },
+          grid: { color: '#2A3244' },
+          title: { display: true, text: 'Potencia (W)', color: '#7C8698', font: { size: 10 } },
+        },
+        y1: {
+          beginAtZero: true,
+          position: 'right',
+          ticks: { color: '#7C8698' },
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'FC (bpm)', color: '#7C8698', font: { size: 10 } },
+        },
       },
     },
   });
   chart.$ftp = null;
   chart.$playheadX = null;
+  chart.$hydrationReminders = [];
   return chart;
 }
 
@@ -133,9 +200,21 @@ function intervalsToPoints(intervals) {
   return points;
 }
 
-export function renderProfile(chart, intervals, ftp) {
+// El eje Y se autoescala solo con los valores del entrenamiento; si el FTP queda por
+// encima de ese máximo (entrenamientos suaves, todos los targets bajos), su línea cae
+// fuera del área visible y el plugin la omite. Forzamos el techo del eje a que siempre
+// incluya el FTP, con un margen para que la línea y su etiqueta no queden pegadas al borde.
+function computeYAxisMax(intervals, ftp) {
+  const maxTarget = intervals.reduce((max, i) => Math.max(max, i.targetPower), 0);
+  const ceiling = ftp ? Math.max(maxTarget, ftp) : maxTarget;
+  return ceiling > 0 ? ceiling * 1.15 : undefined;
+}
+
+export function renderProfile(chart, intervals, ftp, hydrationReminders) {
   chart.data.datasets[0].data = intervalsToPoints(intervals);
   chart.$ftp = ftp || null;
+  chart.$hydrationReminders = hydrationReminders || [];
+  chart.options.scales.y.suggestedMax = computeYAxisMax(intervals, ftp);
   chart.options.scales.x.min = undefined;
   chart.options.scales.x.max = undefined;
   chart.update('none');
@@ -144,7 +223,7 @@ export function renderProfile(chart, intervals, ftp) {
 const ZOOM_WINDOW_BACK = 60; // segundos hacia atrás
 const ZOOM_WINDOW_FORWARD = 300; // segundos hacia adelante
 
-export function renderZoom(chart, intervals, ftp, elapsedSec) {
+export function renderZoom(chart, intervals, ftp, elapsedSec, hydrationReminders) {
   const totalDuration = intervals.reduce((sum, i) => sum + i.duration, 0);
   let min = elapsedSec - ZOOM_WINDOW_BACK;
   let max = elapsedSec + ZOOM_WINDOW_FORWARD;
@@ -160,6 +239,8 @@ export function renderZoom(chart, intervals, ftp, elapsedSec) {
 
   chart.data.datasets[0].data = intervalsToPoints(intervals);
   chart.$ftp = ftp || null;
+  chart.$hydrationReminders = hydrationReminders || [];
+  chart.options.scales.y.suggestedMax = computeYAxisMax(intervals, ftp);
   chart.options.scales.x.min = min;
   chart.options.scales.x.max = max;
   chart.update('none');

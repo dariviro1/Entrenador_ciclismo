@@ -64,6 +64,32 @@ falta completarlas a mano.
 |------------|------------------|--------------------|
 | 2026-08-01 | 245              | test 20min         |
 
+## 4. Conectar Strava (opcional)
+
+Cada entrenamiento guardado se puede subir también a la cuenta de Strava de quien lo
+corre, además de quedar en Sheets. Es opcional: si nadie conecta Strava, la app sigue
+funcionando igual que antes.
+
+1. Ve a [strava.com/settings/api](https://www.strava.com/settings/api) y creá una
+   aplicación (podés crearla desde cualquier cuenta de Strava, no hace falta que sea la
+   tuya si vas a compartir la app). Como "Authorization Callback Domain" poné `localhost`
+   (o el dominio donde sirvas la app, sin puerto ni `http://`).
+2. Copiá el **Client ID** y el **Client Secret** que te da Strava y pegalos en
+   `strava.js`, en las constantes `CLIENT_ID` y `CLIENT_SECRET`.
+3. Cada persona que use la app conecta su propia cuenta desde el menú "⋯" →
+   "Conectar Strava": la manda a iniciar sesión en Strava, aprobar el acceso, y vuelve
+   ya conectada. Nada más que hacer de su lado.
+
+**⚠️ Sobre el Client Secret:** a diferencia del login de Google (que no necesita
+secreto porque usa un flujo 100% en el navegador), Strava exige el `CLIENT_SECRET` de
+la app para el intercambio de token, y como este proyecto no tiene backend, ese secreto
+queda expuesto en el código que corre en el navegador de cada persona -- cualquiera que
+lo inspeccione puede verlo. Es un riesgo aceptado a propósito mientras la app se comparte
+solo entre gente de confianza (vos y tus amigos). **Si en algún momento pensás
+distribuirla más ampliamente o publicarla, hay que mover el intercambio de token a un
+backend o función serverless (Cloudflare Worker, Vercel Function, etc.) que guarde el
+secreto del lado del servidor, en vez de dejarlo en `strava.js`.**
+
 ## Qué resuelve este prototipo
 
 - **Sensores**: conexión BLE a potenciómetro, banda de FC y rodillo, con
@@ -95,6 +121,10 @@ falta completarlas a mano.
   agua y cuántos sobres de hidratante tomar en esa sesión (columna E), visible
   también en la pantalla de la app antes de empezar. Detalle de cómo se calcula
   en `apps-script/README.md`.
+- **Subida a Strava (opcional)**: si conectás tu cuenta de Strava (menú "⋯" →
+  "Conectar Strava"), cada entrenamiento guardado se sube también ahí como actividad
+  "Virtual Ride" con potencia, FC y cadencia, además de quedar en Sheets. Ver la
+  sección 4 más abajo para configurarlo.
 
 ## Generar un plan de entrenamiento con Claude
 

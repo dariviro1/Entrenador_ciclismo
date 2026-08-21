@@ -7,6 +7,7 @@ const SERVICE = {
   cyclingPower: 'cycling_power',
   heartRate: 'heart_rate',
   fitnessMachine: 'fitness_machine',
+  battery: 'battery_service',
 };
 
 const CHAR = {
@@ -16,6 +17,7 @@ const CHAR = {
   ftmsControlPoint: 0x2ad9,
   fitnessMachineFeature: 0x2acc,
   fitnessMachineStatus: 0x2ada,
+  batteryLevel: 'battery_level',
 };
 
 // Opcodes del Fitness Machine Control Point (spec FTMS del Bluetooth SIG)
@@ -50,6 +52,8 @@ export const state = {
   // referencia del dispositivo emparejado y nunca se limpia). Esto es lo que
   // refleja si el sensor sigue realmente conectado ahora mismo.
   connected: { powerMeter: false, heartRate: false, trainer: false },
+  // Porcentaje de batería (0-100) de cada sensor, o null si no reporta Battery Service.
+  battery: { powerMeter: null, heartRate: null, trainer: null },
 };
 
 const dataListeners = new Set();
@@ -93,6 +97,7 @@ function notifySpinDownStatus(subStatus) {
 function attachAutoReconnect(device, label, connectedKey, setupFn, onReconnected) {
   device.addEventListener('gattserverdisconnected', () => {
     state.connected[connectedKey] = false;
+    state.battery[connectedKey] = null;
     notifyConnectionChange();
     notifyStatus(`${label} desconectado. Reconectando...`);
     let attempt = 0;
@@ -115,10 +120,33 @@ function attachAutoReconnect(device, label, connectedKey, setupFn, onReconnected
   });
 }
 
+// Battery Service (0x180F) es opcional en la mayoría de sensores BLE, por eso siempre
+// se declara en optionalServices (no en filters) y los fallos se ignoran en silencio.
+async function trySetupBattery(server, key) {
+  try {
+    const service = await server.getPrimaryService(SERVICE.battery);
+    const char = await service.getCharacteristic(CHAR.batteryLevel);
+    const value = await char.readValue();
+    state.battery[key] = value.getUint8(0);
+    try {
+      await char.startNotifications();
+      char.addEventListener('characteristicvaluechanged', (event) => {
+        state.battery[key] = event.target.value.getUint8(0);
+        notify();
+      });
+    } catch (err) {
+      // El sensor no soporta notificaciones de batería; el valor leído una vez basta.
+    }
+  } catch (err) {
+    state.battery[key] = null; // el sensor no expone Battery Service
+  }
+}
+
 // --- Potenciómetro (Cycling Power Service) ---
 export async function connectPowerMeter() {
   const device = await navigator.bluetooth.requestDevice({
     filters: [{ services: [SERVICE.cyclingPower] }],
+    optionalServices: [SERVICE.battery],
   });
   await setupPowerMeter(device);
   attachAutoReconnect(device, 'Potenciómetro', 'powerMeter', setupPowerMeter);
@@ -132,6 +160,7 @@ async function setupPowerMeter(device) {
   const char = await service.getCharacteristic(CHAR.cyclingPowerMeasurement);
   await char.startNotifications();
   char.addEventListener('characteristicvaluechanged', handlePowerMeasurement);
+  await trySetupBattery(server, 'powerMeter');
   state.connected.powerMeter = true;
   notifyConnectionChange();
 }
@@ -184,6 +213,7 @@ function computeCadence(revs, eventTime) {
 export async function connectHeartRateMonitor() {
   const device = await navigator.bluetooth.requestDevice({
     filters: [{ services: [SERVICE.heartRate] }],
+    optionalServices: [SERVICE.battery],
   });
   await setupHeartRate(device);
   attachAutoReconnect(device, 'Banda de FC', 'heartRate', setupHeartRate);
@@ -203,6 +233,7 @@ async function setupHeartRate(device) {
     state.heartRate = is16bit ? value.getUint16(1, true) : value.getUint8(1);
     notify();
   });
+  await trySetupBattery(server, 'heartRate');
   state.connected.heartRate = true;
   notifyConnectionChange();
 }
@@ -215,6 +246,7 @@ let ftmsControlChar = null;
 export async function connectTrainer(onReconnected) {
   const device = await navigator.bluetooth.requestDevice({
     filters: [{ services: [SERVICE.fitnessMachine] }],
+    optionalServices: [SERVICE.battery],
   });
   await setupTrainer(device);
   attachAutoReconnect(device, 'Simulador', 'trainer', setupTrainer, onReconnected);
@@ -252,6 +284,7 @@ async function setupTrainer(device) {
   statusChar.addEventListener('characteristicvaluechanged', handleFitnessMachineStatus);
 
   await requestControl();
+  await trySetupBattery(server, 'trainer');
   state.connected.trainer = true;
   notifyConnectionChange();
 }

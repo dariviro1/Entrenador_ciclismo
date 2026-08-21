@@ -20,6 +20,10 @@ export function initGoogleClient() {
   });
 }
 
+export function isSignedIn() {
+  return !!accessToken && Date.now() < tokenExpiresAt;
+}
+
 export function signIn() {
   return new Promise((resolve, reject) => {
     tokenClient.callback = (response) => {

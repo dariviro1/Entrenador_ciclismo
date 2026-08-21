@@ -10,7 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
   :root {
-    --bg: #10151F;
+    --bg: #000000;
     --surface: #1A2130;
     --border: #2A3244;
     --text: #EDEFF3;
@@ -26,7 +26,7 @@
     background: var(--bg);
     color: var(--text);
     font-family: 'Inter', sans-serif;
-    padding: 32px 20px 60px;
+    padding: 32px 20px calc(130px + env(safe-area-inset-bottom));
   }
   .wrap { max-width: 720px; margin: 0 auto; }
   header {
@@ -60,7 +60,7 @@
     cursor: pointer;
   }
   button:hover { border-color: var(--text-muted); }
-  button.primary { background: var(--power); border-color: var(--power); color: #2B1B04; }
+  button.primary, select.primary { background: var(--power); border-color: var(--power); color: #2B1B04; }
   button.primary:hover { opacity: 0.9; }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   button:disabled:hover { border-color: var(--border); }
@@ -98,8 +98,24 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 14px;
-    height: 180px;
   }
+  .chart-canvas-wrap { position: relative; height: 180px; }
+  .chart-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
   input[type="number"], input[type="text"], input[type="date"], select {
     background: var(--bg);
@@ -157,12 +173,14 @@
     margin: 20px 0 28px;
   }
   .bottom-bar {
-    position: sticky;
+    /* fixed (no sticky): sticky solo se ancla al fondo mientras el contenido empuja el
+       scroll; si el contenido es más corto que la pantalla, se queda flotando donde
+       termina el contenido en vez de pegado al borde inferior real de la ventana. */
+    position: fixed;
     z-index: 10;
     bottom: 0;
     left: 0;
     right: 0;
-    margin: 24px -20px -60px;
     padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
     background: var(--surface);
     border-top: 1px solid var(--border);
@@ -196,7 +214,7 @@
   #paired-count.has-devices { color: var(--ftp); }
   #devices-popover.popover { position: fixed; top: auto; bottom: 60px; right: 20px; left: auto; }
 
-  .chart-card.small { height: 130px; }
+  .chart-card.small .chart-canvas-wrap { height: 130px; }
 
   .toast {
     position: fixed;
@@ -295,6 +313,45 @@
   }
   .modal-actions.center { justify-content: center; }
   .calibration-target { font-size: 12px; color: var(--ftp); margin-top: -6px; margin-bottom: 12px; }
+
+  .collapsible-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: transparent;
+    border: none;
+    padding: 0 0 12px;
+    margin: 0;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+  .collapsible-header:hover { color: var(--text); }
+  .collapsible-chevron { display: inline-block; font-size: 28px; line-height: 1; transition: transform 0.2s ease; }
+  .collapsible-chevron.open { transform: rotate(180deg); }
+  .collapsible-body.hidden { display: none; }
+
+  #devices-popover.popover { min-width: 280px; }
+  .device-info { display: flex; flex-direction: column; gap: 2px; }
+  .device-name { font-weight: 500; }
+  .device-battery { font-size: 11px; color: var(--text-muted); }
+  .device-battery.hidden { display: none; }
+  .power-source-radio {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .power-source-radio.hidden { display: none; }
+  .power-source-radio input { accent-color: var(--power); }
+  .device-connect-btn { font-size: 12px; padding: 6px 10px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -305,13 +362,13 @@
 <div id="device-gate" class="countdown-overlay hidden">
   <div class="modal-card">
     <h2>Conecta tus dispositivos</h2>
-    <p>El <strong>Simulador</strong> es obligatorio para empezar. La cadencia y la frecuencia cardíaca son opcionales.</p>
+    <p>Necesitas al menos un sensor de <strong>potencia</strong> para empezar (Simulador, potenciómetro, biela o pedales). La banda de FC es opcional.</p>
     <div class="device-row">
       <span>Simulador</span>
       <button id="gate-connect-trainer" class="device-connect-btn">Conectar</button>
     </div>
     <div class="device-row">
-      <span>Potenciómetro (cadencia)</span>
+      <span>Potenciómetro / biela / pedales</span>
       <button id="gate-connect-power" class="device-connect-btn">Conectar</button>
     </div>
     <div class="device-row">
@@ -375,6 +432,7 @@
       <button id="pause-toggle" class="icon-btn" aria-label="Pausar" disabled>⏸</button>
       <button id="menu-toggle" class="icon-btn" aria-label="Más opciones">⋯</button>
       <div id="session-menu" class="popover hidden">
+        <button id="menu-strava">Conectar Strava</button>
         <button id="menu-calibrate">Calibrar Simulador</button>
         <button id="menu-discard">Descartar y cerrar</button>
         <button id="menu-save">Guardar y cerrar</button>
@@ -397,25 +455,48 @@
 
   <section>
     <h2>Perfil del entrenamiento</h2>
-    <div class="chart-card"><canvas id="profile-chart"></canvas></div>
+    <div class="chart-card">
+      <div class="chart-canvas-wrap"><canvas id="profile-chart"></canvas></div>
+      <div class="chart-legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:#F2A93B"></span>Objetivo (W)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#EDEFF3"></span>Potencia real (W)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#E2574C"></span>FC real (bpm)</div>
+      </div>
+    </div>
   </section>
 
   <section>
     <h2>Próximos intervalos</h2>
-    <div class="chart-card small"><canvas id="zoom-chart"></canvas></div>
+    <div class="chart-card small">
+      <div class="chart-canvas-wrap"><canvas id="zoom-chart"></canvas></div>
+      <div class="chart-legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:#F2A93B"></span>Objetivo (W)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#EDEFF3"></span>Potencia real (W)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#E2574C"></span>FC real (bpm)</div>
+      </div>
+    </div>
   </section>
 
   <section>
-    <h2>Sesión en vivo</h2>
-    <div class="chart-card"><canvas id="live-chart"></canvas></div>
+    <button type="button" id="live-session-toggle" class="collapsible-header">
+      <span>Sesión en vivo</span>
+      <span id="live-session-chevron" class="collapsible-chevron">▾</span>
+    </button>
+    <div id="live-session-body" class="chart-card collapsible-body hidden">
+      <div class="chart-canvas-wrap"><canvas id="live-chart"></canvas></div>
+      <div class="chart-legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:#F2A93B"></span>Potencia (W)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#E2574C"></span>FC (bpm)</div>
+      </div>
+    </div>
   </section>
 
   <section>
     <h2>Sesión</h2>
     <div class="controls">
-      <button id="load-workout">Cargar entrenamiento</button>
+      <button id="load-workout" class="primary">Cargar entrenamiento</button>
       <select id="workout-select" class="hidden"></select>
-      <button id="start" class="primary">Iniciar</button>
+      <button id="start">Iniciar</button>
     </div>
     <div id="status"></div>
   </section>
@@ -443,15 +524,41 @@
       <option value="120">120%</option>
     </select>
   </div>
-  <div class="version-label">Dariviro Performance — Indoor Cycling V1.09</div>
+  <div class="version-label">Dariviro Performance — Indoor Cycling V1.17</div>
   <button id="devices-toggle" class="devices-btn">
     Devices <span id="paired-count">0 Paired</span>
   </button>
 </footer>
 <div id="devices-popover" class="popover hidden">
-  <button id="connect-power">Conectar potenciómetro para cadencia</button>
-  <button id="connect-trainer">Conectar Simulador</button>
-  <button id="connect-hr">Conectar banda FC</button>
+  <div class="device-row">
+    <div class="device-info">
+      <span class="device-name">Simulador</span>
+      <span id="trainer-battery" class="device-battery hidden"></span>
+    </div>
+    <label id="power-source-trainer-label" class="power-source-radio hidden">
+      <input type="radio" name="power-source" id="power-source-trainer">
+      Potencia
+    </label>
+    <button id="connect-trainer" class="device-connect-btn">Conectar</button>
+  </div>
+  <div class="device-row">
+    <div class="device-info">
+      <span class="device-name">Potenciómetro / biela</span>
+      <span id="power-meter-battery" class="device-battery hidden"></span>
+    </div>
+    <label id="power-source-power-meter-label" class="power-source-radio hidden">
+      <input type="radio" name="power-source" id="power-source-power-meter">
+      Potencia
+    </label>
+    <button id="connect-power" class="device-connect-btn">Conectar</button>
+  </div>
+  <div class="device-row">
+    <div class="device-info">
+      <span class="device-name">Banda FC</span>
+      <span id="hr-battery" class="device-battery hidden"></span>
+    </div>
+    <button id="connect-hr" class="device-connect-btn">Conectar</button>
+  </div>
 </div>
 
 <script type="module" src="app.js"></script>

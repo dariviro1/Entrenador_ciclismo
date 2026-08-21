@@ -20,7 +20,20 @@
       "Bash(git -C \"c:\\\\Users\\\\dariv\\\\Documents\\\\GitHub\\\\DRVR-ENTRENADOR CICLISMO\" diff -- sheets.js)",
       "Bash(git -C \"c:\\\\Users\\\\dariv\\\\Documents\\\\GitHub\\\\DRVR-ENTRENADOR CICLISMO\" show HEAD:sheets.js)",
       "Read(//c/Users/dariv/.claude/projects/c--Users-dariv-Documents-GitHub-DRVR-ENTRENADOR-CICLISMO/memory/**)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "PowerShell([Environment]::GetFolderPath\\(\"Desktop\"\\))",
+      "PowerShell(Get-Command python -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command python3 -ErrorAction SilentlyContinue)",
+      "Bash(\"/c/Users/DARIVIRO-EHVERT/AppData/Local/Microsoft/WindowsApps/python.exe\" --version)",
+      "Bash(echo \"exit: $?\")",
+      "PowerShell(Get-Process chrome -ErrorAction SilentlyContinue)",
+      "Bash(node --check app.js)",
+      "Bash(node --check bluetooth.js)",
+      "Bash(node --check livechart.js)",
+      "Bash(command -v chromium-cli)",
+      "Bash(command -v npx)",
+      "Bash('/c/Program Files/Google/Chrome/Application/chrome.exe' --headless=new --disable-gpu --no-sandbox --window-size=800,1400 --screenshot=/c/Users/DARIVIRO-EHVERT/AppData/Local/Temp/claude/g--My-Drive-5-PROYECTOS-GitHub-DRVR-ENTRENADOR-CICLISMO/3970676e-87a7-43c4-87ac-e40ef992c1b8/scratchpad/render.png --user-data-dir=/c/Users/DARIVIRO-EHVERT/AppData/Local/Temp/claude_chrome_test_profile http://localhost:8000/)",
+      "PowerShell(Select-String -Path \"$env:TEMP\\\\chrome_stderr.log\" -Pattern \"error|Error|Uncaught|SyntaxError|TypeError|ReferenceError\" | Select-Object -First 30)"
     ]
   }
 }

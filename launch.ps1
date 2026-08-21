@@ -12,7 +12,25 @@ $url = "http://localhost:$port/"
 
 $listening = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if (-not $listening) {
-  Start-Process -FilePath "py" -ArgumentList "-m", "http.server", "$port" -WindowStyle Hidden
+  # Busca un Python real (evita el stub de Microsoft Store que existe aunque
+  # Python no esté instalado, y falla con código 49 al invocarlo).
+  $pyCmd = $null
+  foreach ($candidate in @("py", "python3", "python")) {
+    $cmdInfo = Get-Command $candidate -ErrorAction SilentlyContinue
+    if ($cmdInfo) {
+      try {
+        & $candidate --version *> $null
+        if ($LASTEXITCODE -eq 0) { $pyCmd = $candidate; break }
+      } catch {}
+    }
+  }
+
+  if ($pyCmd) {
+    Start-Process -FilePath $pyCmd -ArgumentList "-m", "http.server", "$port" -WindowStyle Hidden
+  } else {
+    # Sin Python disponible: usa el servidor de respaldo en PowerShell puro.
+    Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$root\serve.ps1`"", "-Port", "$port" -WindowStyle Hidden
+  }
   Start-Sleep -Milliseconds 800
 }
 
