@@ -828,7 +828,17 @@ async function saveSummary() {
   };
   await history.appendSessionSummary(SPREADSHEET_ID, summary);
 
-  // Strava es "además de" Sheets, no "en vez de": si falla, se avisa pero no se
+  // Descarga el .tcx de la sesión para subirlo a mano en strava.com/upload/select
+  // (la subida automática por API exige un plan pago de Strava desde 2025).
+  strava.downloadActivityFile({
+    name: summary.workoutName,
+    startedAt: sessionStartedAt ?? new Date(Date.now() - sessionElapsed * 1000),
+    powerSamples: session.powerSamples,
+    hrSamples: session.hrSamples,
+    cadenceSamples: session.cadenceSamples,
+  });
+
+  // Strava (API) es "además de" Sheets, no "en vez de": si falla, se avisa pero no se
   // deshace ni bloquea el guardado en Sheets, que ya quedó hecho arriba.
   if (strava.isConnected()) {
     try {

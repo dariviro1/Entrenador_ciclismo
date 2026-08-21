@@ -186,6 +186,27 @@ async function setWorkoutType(activityId, accessToken) {
   if (!res.ok) throw new Error(`Strava: no se pudo etiquetar la actividad como "Workout" (${res.status})`);
 }
 
+// Genera el .tcx de la sesión y lo descarga al navegador (carpeta de Descargas por
+// defecto) para subirlo manualmente en strava.com/upload/select -- alternativa a
+// uploadActivity() para quien no tenga acceso de API de Strava (requiere plan pago desde
+// 2025) pero sí quiera subir sus entrenamientos a mano.
+export function downloadActivityFile({ name, startedAt, powerSamples, hrSamples, cadenceSamples }) {
+  if (!powerSamples.length) return;
+  const tcx = buildTCX({ startedAt, powerSamples, hrSamples, cadenceSamples });
+  const safeName = name.replace(/[\\/:*?"<>|]/g, '_');
+  const dateStr = startedAt.toISOString().slice(0, 10);
+
+  const blob = new Blob([tcx], { type: 'application/xml' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${dateStr}_${safeName}.tcx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Sube la sesión terminada como Ride indoor (sin GPS). `trainer: true` es el campo que
 // Strava documenta específicamente para este caso -- a diferencia de `activity_type`
 // (que la propia documentación de Strava dice que "puede ser sobreescrito por el tipo
